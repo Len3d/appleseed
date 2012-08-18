@@ -62,7 +62,7 @@ class Tree
     size_t get_memory_size() const;
 
   protected:
-	template <typename Tree>
+    template <typename Tree>
     friend class Convertor;
 
     template <typename Tree, typename Visitor, typename Ray, size_t StackSize, size_t N>
@@ -90,14 +90,14 @@ Tree<NodeVector>::Tree(const AllocatorType& allocator)
 template <typename NodeVector>
 void Tree<NodeVector>::clear()
 {
-	// TODO: m_node_bboxes is not clear here
+    // TODO: m_node_bboxes is not clear here
     m_nodes.clear();
 }
 
 template <typename NodeVector>
 size_t Tree<NodeVector>::get_memory_size() const
 {
-	// TODO: Should we count the memory of m_node_bboxes?
+    // TODO: Should we count the memory of m_node_bboxes?
     return
           sizeof(*this)
         + m_nodes.capacity() * sizeof(NodeType);

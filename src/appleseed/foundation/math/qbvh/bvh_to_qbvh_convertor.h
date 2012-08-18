@@ -55,14 +55,14 @@ class Convertor
     // Convert a tree.
     template <typename Timer>
     void convert(
-		BVHTree&		bvh_tree,
+        BVHTree&		bvh_tree,
         Tree&           tree);
 
     // Return the conversion time.
     double get_build_time() const;
 
   private:
-	typedef typename BVHTree::NodeType BVHNodeType;
+    typedef typename BVHTree::NodeType BVHNodeType;
     typedef typename Tree::NodeType NodeType;
     typedef typename NodeType::AABBType AABBType;
 
@@ -70,12 +70,12 @@ class Convertor
 
     // Recursively convert the tree.
     void convert_recurse(
-		BVHTree&		bvh_tree,
+        BVHTree&		bvh_tree,
         Tree&           tree,
-		BVHNodeType&	bvh_node,
+        BVHNodeType&	bvh_node,
         const int		parent_index,
-		const int		child_index,
-		const int		depth);
+        const int		child_index,
+        const int		depth);
 };
 
 
@@ -92,7 +92,7 @@ Convertor<BVHTree, Tree>::Convertor()
 template <typename BVHTree, typename Tree>
 template <typename Timer>
 void Convertor<BVHTree, Tree>::convert(
-	BVHTree&			bvh_tree,
+    BVHTree&			bvh_tree,
     Tree&               tree)
 {
     // Start stopwatch.
@@ -111,11 +111,11 @@ void Convertor<BVHTree, Tree>::convert(
 
     // Recursively convert the tree.
     convert_recurse(
-		bvh_tree,
+        bvh_tree,
         tree,
-		bvh_tree.m_nodes[0],
-		-1,
-		0,
+        bvh_tree.m_nodes[0],
+        -1,
+        0,
         0);
 
     // Measure and save conversion time.
@@ -131,48 +131,48 @@ inline double Convertor<BVHTree, Tree>::get_build_time() const
 
 template <typename BVHTree, typename Tree>
 void Convertor<BVHTree, Tree>::convert_recurse(
-	BVHTree&			bvh_tree,
+    BVHTree&			bvh_tree,
     Tree&               tree,
-	BVHNodeType&		bvh_node,
-	const int			parent_index,
-	const int			child_index,
+    BVHNodeType&		bvh_node,
+    const int			parent_index,
+    const int			child_index,
     const int			depth)
 {
-	// Create a leaf if we meet a leaf
-	if (node->is_leaf())
-	{
-		create_temp_leaf(bvh_tree, tree, bvh_node, parent_index, child_index);
-		return;
-	}
+    // Create a leaf if we meet a leaf
+    if (node->is_leaf())
+    {
+        create_temp_leaf(bvh_tree, tree, bvh_node, parent_index, child_index);
+        return;
+    }
 
-	int current_node = parent_index;
-	int left_child_index = child_index;
-	int right_child_index = child_index + 1;
+    int current_node = parent_index;
+    int left_child_index = child_index;
+    int right_child_index = child_index + 1;
 
-	// Create an intermediate node if the depth indicates to do so
-	if (depth % 2 == 0)
-	{
-		current_node = create_intermediate_node(bvh_tree, tree, bvh_node, parent_index, child_index);
-		left_child_index = 0;
-		right_child_index = 2;
-	}
+    // Create an intermediate node if the depth indicates to do so
+    if (depth % 2 == 0)
+    {
+        current_node = create_intermediate_node(bvh_tree, tree, bvh_node, parent_index, child_index);
+        left_child_index = 0;
+        right_child_index = 2;
+    }
 
     // Recurse into the left subtree.
     convert_recurse(
-		bvh_tree,
+        bvh_tree,
         tree,
-		bvh_node.get_left_node(),
-		current_node,
-		left_child_index,
+        bvh_node.get_left_node(),
+        current_node,
+        left_child_index,
         depth + 1);
 
     // Recurse into the right subtree.
     convert_recurse(
-		bvh_tree,
+        bvh_tree,
         tree,
-		bvh_node.get_right_node(),
-		current_node,
-		right_child_index,
+        bvh_node.get_right_node(),
+        current_node,
+        right_child_index,
         depth + 1);
 }
 

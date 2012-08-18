@@ -102,15 +102,15 @@ class FOUNDATION_ALIGN(64) Node
 
     SSE_ALIGN ValueType     m_bbox_data[8 * Dimension];
 
-	// If a child is a leaf, its index will be negative, 
-	// the 2 next bits will code the split axis, and the 29 remaining bits 
-	// will code the index of the first primitive.
-	int32					m_child[4];
-	// The number of primitives in each child if it's a leaf. Our implementation 
-	// is different from other implementations, we don't have the limitation of 
-	// at the most 64 primitives each leaf, we can have any number of leaf 
-	// primitives.
-	int32					m_prim_count[4];
+    // If a child is a leaf, its index will be negative, 
+    // the 2 next bits will code the split axis, and the 29 remaining bits 
+    // will code the index of the first primitive.
+    int32					m_child[4];
+    // The number of primitives in each child if it's a leaf. Our implementation 
+    // is different from other implementations, we don't have the limitation of 
+    // at the most 64 primitives each leaf, we can have any number of leaf 
+    // primitives.
+    int32					m_prim_count[4];
 };
 
 
