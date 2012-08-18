@@ -32,7 +32,6 @@
 // appleseed.renderer headers.
 #include "renderer/kernel/lighting/tracer.h"
 #include "renderer/kernel/shading/shadingcontext.h"
-#include "renderer/kernel/shading/shadingpoint.h"
 #include "renderer/modeling/bsdf/bsdf.h"
 #include "renderer/modeling/environmentedf/environmentedf.h"
 #include "renderer/modeling/input/inputevaluator.h"
@@ -62,6 +61,7 @@ namespace
         const Vector3d&             outgoing,
         const BSDF&                 bsdf,
         const void*                 bsdf_data,
+        const int                   bsdf_modes,
         const size_t                bsdf_sample_count,
         const size_t                env_sample_count,
         Spectrum&                   radiance,
@@ -75,19 +75,18 @@ namespace
             Vector3d incoming;
             Spectrum bsdf_value;
             double bsdf_prob;
-            BSDF::Mode bsdf_mode;
-            bsdf.sample(
-                sampling_context,
-                bsdf_data,
-                false,              // not adjoint
-                true,               // multiply by |cos(incoming, normal)|
-                geometric_normal,
-                shading_basis,
-                outgoing,
-                incoming,
-                bsdf_value,
-                bsdf_prob,
-                bsdf_mode);
+            const BSDF::Mode bsdf_mode =
+                bsdf.sample(
+                    sampling_context,
+                    bsdf_data,
+                    false,          // not adjoint
+                    true,           // multiply by |cos(incoming, normal)|
+                    geometric_normal,
+                    shading_basis,
+                    outgoing,
+                    incoming,
+                    bsdf_value,
+                    bsdf_prob);
 
             // Ignore glossy/specular components: they must be handled by the parent.
             // See Physically Based Rendering vol. 1 page 732.
@@ -98,21 +97,15 @@ namespace
             assert(bsdf_prob != BSDF::DiracDelta);
 
             // Compute the transmission factor toward the incoming direction.
-            Tracer tracer(
-                shading_context.get_intersector(),
-                shading_context.get_texture_cache());
-            double transmission;
-            const ShadingPoint& shading_point =
-                tracer.trace(
-                    sampling_context,
+            const double transmission =
+                shading_context.get_tracer().trace(
                     point,
                     incoming,
                     time,
-                    transmission,
                     parent_shading_point);
 
             // Discard occluded samples.
-            if (shading_point.hit())
+            if (transmission == 0.0)
                 continue;
 
             // Evaluate the environment's EDF.
@@ -132,7 +125,7 @@ namespace
                     env_sample_count * env_prob);
 
             // Add the contribution of this sample to the illumination.
-            env_value *= static_cast<float>(transmission * mis_weight / bsdf_prob);
+            env_value *= static_cast<float>(transmission / bsdf_prob * mis_weight);
             env_value *= bsdf_value;
             radiance += env_value;
         }
@@ -157,6 +150,7 @@ namespace
         const Vector3d&             outgoing,
         const BSDF&                 bsdf,
         const void*                 bsdf_data,
+        const int                   bsdf_modes,
         const size_t                bsdf_sample_count,
         const size_t                env_sample_count,
         Spectrum&                   radiance,
@@ -194,22 +188,15 @@ namespace
                 continue;
 
             // Compute the transmission factor toward the incoming direction.
-            SamplingContext child_sampling_context(sampling_context);
-            Tracer tracer(
-                shading_context.get_intersector(),
-                shading_context.get_texture_cache());
-            double transmission;
-            const ShadingPoint& shading_point =
-                tracer.trace(
-                    child_sampling_context,
+            const double transmission =
+                shading_context.get_tracer().trace(
                     point,
                     incoming,
                     time,
-                    transmission,
                     parent_shading_point);
 
             // Discard occluded samples.
-            if (shading_point.hit())
+            if (transmission == 0.0)
                 continue;
 
             // Evaluate the BSDF.
@@ -217,12 +204,13 @@ namespace
             const double bsdf_prob =
                 bsdf.evaluate(
                     bsdf_data,
-                    false,              // not adjoint
-                    true,               // multiply by |cos(incoming, normal)|
+                    false,          // not adjoint
+                    true,           // multiply by |cos(incoming, normal)|
                     geometric_normal,
                     shading_basis,
                     outgoing,
                     incoming,
+                    bsdf_modes,
                     bsdf_value);
             if (bsdf_prob == 0.0)
                 continue;
@@ -250,20 +238,21 @@ namespace
 //
 
 void compute_image_based_lighting(
-    SamplingContext&            sampling_context,
-    const ShadingContext&       shading_context,
-    const EnvironmentEDF&       environment_edf,
-    const Vector3d&             point,
-    const Vector3d&             geometric_normal,
-    const Basis3d&              shading_basis,
-    const double                time,
-    const Vector3d&             outgoing,
-    const BSDF&                 bsdf,
-    const void*                 bsdf_data,
-    const size_t                bsdf_sample_count,
-    const size_t                env_sample_count,
-    Spectrum&                   radiance,
-    const ShadingPoint*         parent_shading_point)
+    SamplingContext&                sampling_context,
+    const ShadingContext&           shading_context,
+    const EnvironmentEDF&           environment_edf,
+    const Vector3d&                 point,
+    const Vector3d&                 geometric_normal,
+    const Basis3d&                  shading_basis,
+    const double                    time,
+    const Vector3d&                 outgoing,
+    const BSDF&                     bsdf,
+    const void*                     bsdf_data,
+    const int                       bsdf_modes,
+    const size_t                    bsdf_sample_count,
+    const size_t                    env_sample_count,
+    Spectrum&                       radiance,
+    const ShadingPoint*             parent_shading_point)
 {
     assert(is_normalized(geometric_normal));
     assert(is_normalized(outgoing));
@@ -280,6 +269,7 @@ void compute_image_based_lighting(
         outgoing,
         bsdf,
         bsdf_data,
+        bsdf_modes,
         bsdf_sample_count,
         env_sample_count,
         radiance,
@@ -298,6 +288,7 @@ void compute_image_based_lighting(
         outgoing,
         bsdf,
         bsdf_data,
+        bsdf_modes,
         bsdf_sample_count,
         env_sample_count,
         radiance_env_sampling,

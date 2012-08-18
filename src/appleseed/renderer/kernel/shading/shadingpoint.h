@@ -42,17 +42,14 @@
 #include "renderer/modeling/scene/assemblyinstance.h"
 #include "renderer/modeling/scene/containers.h"
 #include "renderer/modeling/scene/objectinstance.h"
-#include "renderer/modeling/scene/scene.h"
 
 // appleseed.foundation headers.
-#include "foundation/core/concepts/noncopyable.h"
 #include "foundation/image/color.h"
 #include "foundation/math/basis.h"
 #include "foundation/math/transform.h"
 #include "foundation/math/vector.h"
 #include "foundation/platform/compiler.h"
 #include "foundation/platform/types.h"
-#include "foundation/utility/uid.h"
 
 // Standard headers.
 #include <cassert>
@@ -60,6 +57,7 @@
 
 // Forward declarations.
 namespace renderer  { class Object; }
+namespace renderer  { class Scene; }
 namespace renderer  { class TextureCache; }
 
 namespace renderer
@@ -70,14 +68,18 @@ namespace renderer
 //
 
 class ShadingPoint
-  : public foundation::NonCopyable
 {
   public:
     // Constructor, calls clear().
     ShadingPoint();
 
+    // Copy constructor.
+    explicit ShadingPoint(const ShadingPoint& rhs);
+
     // Reset the shading point to its initial state (no intersection).
     void clear();
+
+    void set_ray(const ShadingRay& ray);
 
     // Return the scene that was tested for intersection.
     const Scene& get_scene() const;
@@ -146,9 +148,6 @@ class ShadingPoint
     // Return the object that was hit.
     const Object& get_object() const;
 
-    // Return the unique ID of the assembly instance that was hit.
-    foundation::UniqueID get_assembly_instance_uid() const;
-
     // Return the index, within the assembly, of the object instance that was hit.
     size_t get_object_instance_index() const;
 
@@ -179,7 +178,8 @@ class ShadingPoint
     // Intersection results.
     bool                                m_hit;                          // true if there was a hit, false otherwise
     foundation::Vector2d                m_bary;                         // barycentric coordinates of intersection point
-    foundation::UniqueID                m_asm_instance_uid;             // unique ID of the assembly instance that was hit
+    const AssemblyInstance*             m_assembly_instance;            // hit assembly instance
+    foundation::Transformd              m_assembly_instance_transform;  // transform of the hit assembly instance at ray time
     size_t                              m_object_instance_index;        // index of the object instance that was hit
     size_t                              m_region_index;                 // index of the region containing the hit triangle
     size_t                              m_triangle_index;               // index of the hit triangle
@@ -202,7 +202,6 @@ class ShadingPoint
         HasMaterial                     = 1 << 11
     };
     mutable foundation::uint32          m_members;                      // which members have already been computed
-    mutable const AssemblyInstance*     m_assembly_instance;            // hit assembly instance
     mutable const Assembly*             m_assembly;                     // hit assembly
     mutable const ObjectInstance*       m_object_instance;              // hit object instance
     mutable Object*                     m_object;                       // hit object
@@ -251,6 +250,23 @@ FORCE_INLINE ShadingPoint::ShadingPoint()
     clear();
 }
 
+inline ShadingPoint::ShadingPoint(const ShadingPoint& rhs)
+  : m_region_kit_cache(rhs.m_region_kit_cache)
+  , m_tess_cache(rhs.m_tess_cache)
+  , m_texture_cache(rhs.m_texture_cache)
+  , m_scene(rhs.m_scene)
+  , m_ray(rhs.m_ray)
+  , m_hit(rhs.m_hit)
+  , m_bary(rhs.m_bary)
+  , m_assembly_instance(rhs.m_assembly_instance)
+  , m_object_instance_index(rhs.m_object_instance_index)
+  , m_region_index(rhs.m_region_index)
+  , m_triangle_index(rhs.m_triangle_index)
+  , m_triangle_support_plane(rhs.m_triangle_support_plane)
+  , m_members(0)
+{
+}
+
 FORCE_INLINE void ShadingPoint::clear()
 {
     m_region_kit_cache = 0;
@@ -259,6 +275,11 @@ FORCE_INLINE void ShadingPoint::clear()
     m_scene = 0;
     m_hit = false;
     m_members = 0;
+}
+
+inline void ShadingPoint::set_ray(const ShadingRay& ray)
+{
+    m_ray = ray;
 }
 
 inline const Scene& ShadingPoint::get_scene() const
@@ -388,8 +409,8 @@ inline const foundation::Vector3d& ShadingPoint::get_geometric_normal() const
 
             // Transform the geometric normal to world space.
             m_geometric_normal =
-                m_assembly_instance->get_transform().transform_normal_to_parent(
-                    m_object_instance->get_transform().transform_normal_to_parent(m_geometric_normal));
+                m_assembly_instance_transform.normal_to_parent(
+                    m_object_instance->get_transform().normal_to_parent(m_geometric_normal));
         }
 
         // Normalize the geometric normal.
@@ -431,12 +452,7 @@ inline const foundation::Vector3d& ShadingPoint::get_shading_normal() const
         {
             // Lookup the normal map.
             foundation::Color3f normal_rgb;
-            Alpha alpha;
-            material->get_normal_map()->evaluate(
-                *m_texture_cache,
-                get_uv(0),
-                normal_rgb,
-                alpha);
+            material->get_normal_map()->evaluate(*m_texture_cache, get_uv(0), normal_rgb);
 
             // Reconstruct the shading normal from the texel value.
             assert(is_saturated(normal_rgb));
@@ -493,8 +509,8 @@ inline const foundation::Vector3d& ShadingPoint::get_original_shading_normal() c
 
             // Transform the shading normal to world space.
             m_original_shading_normal =
-                m_assembly_instance->get_transform().transform_normal_to_parent(
-                    m_object_instance->get_transform().transform_normal_to_parent(m_original_shading_normal));
+                m_assembly_instance_transform.normal_to_parent(
+                    m_object_instance->get_transform().normal_to_parent(m_original_shading_normal));
         }
 
         // Normalize the shading normal.
@@ -543,20 +559,16 @@ inline const foundation::Vector3d& ShadingPoint::get_vertex(const size_t i) cons
         const foundation::Transformd& obj_instance_transform =
             m_object_instance->get_transform();
 
-        // Retrieve assembly instance space to world space transform.
-        const foundation::Transformd& asm_instance_transform =
-            m_assembly_instance->get_transform();
-
         // Transform triangle vertices to world space.
         const foundation::Vector3d v0(m_v0);
         const foundation::Vector3d v1(m_v1);
         const foundation::Vector3d v2(m_v2);
-        m_v0_w = obj_instance_transform.transform_point_to_parent(v0);
-        m_v1_w = obj_instance_transform.transform_point_to_parent(v1);
-        m_v2_w = obj_instance_transform.transform_point_to_parent(v2);
-        m_v0_w = asm_instance_transform.transform_point_to_parent(m_v0_w);
-        m_v1_w = asm_instance_transform.transform_point_to_parent(m_v1_w);
-        m_v2_w = asm_instance_transform.transform_point_to_parent(m_v2_w);
+        m_v0_w = obj_instance_transform.point_to_parent(v0);
+        m_v1_w = obj_instance_transform.point_to_parent(v1);
+        m_v2_w = obj_instance_transform.point_to_parent(v2);
+        m_v0_w = m_assembly_instance_transform.point_to_parent(m_v0_w);
+        m_v1_w = m_assembly_instance_transform.point_to_parent(m_v1_w);
+        m_v2_w = m_assembly_instance_transform.point_to_parent(m_v2_w);
 
         // World space triangle vertices are now available.
         m_members |= HasWorldSpaceVertices;
@@ -578,20 +590,16 @@ inline const foundation::Vector3d& ShadingPoint::get_vertex_normal(const size_t 
         const foundation::Transformd& obj_instance_transform =
             m_object_instance->get_transform();
 
-        // Retrieve assembly instance space to world space transform.
-        const foundation::Transformd& asm_instance_transform =
-            m_assembly_instance->get_transform();
-
         // Transform vertex normals to world space.
         const foundation::Vector3d n0(m_n0);
         const foundation::Vector3d n1(m_n1);
         const foundation::Vector3d n2(m_n2);
-        m_n0_w = obj_instance_transform.transform_normal_to_parent(n0);
-        m_n1_w = obj_instance_transform.transform_normal_to_parent(n1);
-        m_n2_w = obj_instance_transform.transform_normal_to_parent(n2);
-        m_n0_w = asm_instance_transform.transform_normal_to_parent(m_n0_w);
-        m_n1_w = asm_instance_transform.transform_normal_to_parent(m_n1_w);
-        m_n2_w = asm_instance_transform.transform_normal_to_parent(m_n2_w);
+        m_n0_w = obj_instance_transform.normal_to_parent(n0);
+        m_n1_w = obj_instance_transform.normal_to_parent(n1);
+        m_n2_w = obj_instance_transform.normal_to_parent(n2);
+        m_n0_w = m_assembly_instance_transform.normal_to_parent(m_n0_w);
+        m_n1_w = m_assembly_instance_transform.normal_to_parent(m_n1_w);
+        m_n2_w = m_assembly_instance_transform.normal_to_parent(m_n2_w);
 
         // World space vertex normals are now available.
         m_members |= HasWorldSpaceVertexNormals;
@@ -634,7 +642,6 @@ inline const Material* ShadingPoint::get_material() const
 inline const AssemblyInstance& ShadingPoint::get_assembly_instance() const
 {
     assert(hit());
-    cache_source_geometry();
     return *m_assembly_instance;
 }
 
@@ -657,12 +664,6 @@ inline const Object& ShadingPoint::get_object() const
     assert(hit());
     cache_source_geometry();
     return *m_object;
-}
-
-inline foundation::UniqueID ShadingPoint::get_assembly_instance_uid() const
-{
-    assert(hit());
-    return m_asm_instance_uid;
 }
 
 inline size_t ShadingPoint::get_object_instance_index() const

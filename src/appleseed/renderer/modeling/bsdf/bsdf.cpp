@@ -53,16 +53,19 @@ namespace
 
 BSDF::BSDF(
     const char*         name,
+    const Type          type,
     const ParamArray&   params)
   : ConnectableEntity(g_class_uid, params)
+  , m_type(type)
 {
     set_name(name);
 }
 
-void BSDF::on_frame_begin(
+bool BSDF::on_frame_begin(
     const Project&      project,
     const Assembly&     assembly)
 {
+    return true;
 }
 
 void BSDF::on_frame_end(

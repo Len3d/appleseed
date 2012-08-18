@@ -84,17 +84,18 @@ namespace
         KelemenBRDFImpl(
             const char*         name,
             const ParamArray&   params)
-          : BSDF(name, params)
-          , m_mdf(0)
+          : BSDF(name, Reflective, params)
         {
             m_inputs.declare("matte_reflectance", InputFormatSpectrum);
+            m_inputs.declare("matte_reflectance_multiplier", InputFormatScalar, "1.0");
             m_inputs.declare("specular_reflectance", InputFormatSpectrum);
+            m_inputs.declare("specular_reflectance_multiplier", InputFormatScalar, "1.0");
             m_inputs.declare("roughness", InputFormatScalar);
         }
 
         ~KelemenBRDFImpl()
         {
-            assert(m_mdf == 0);
+            assert(m_mdf.get() == 0);
         }
 
         virtual void release() override
@@ -107,27 +108,29 @@ namespace
             return Model;
         }
 
-        virtual void on_frame_begin(
+        virtual bool on_frame_begin(
             const Project&      project,
             const Assembly&     assembly) override
         {
-            BSDF::on_frame_begin(project, assembly);
+            if (!BSDF::on_frame_begin(project, assembly))
+                return false;
 
             // todo: implement proper error handling.
-            assert(m_inputs.source("specular_reflectance"));
             assert(m_inputs.source("specular_reflectance")->is_uniform());
-            assert(m_inputs.source("roughness"));
+            assert(m_inputs.source("specular_reflectance_multiplier")->is_uniform());
             assert(m_inputs.source("roughness")->is_uniform());
 
-            UniformInputEvaluator uniform_input_evaluator;
-            const InputValues* uniform_values =
-                static_cast<const InputValues*>(uniform_input_evaluator.evaluate(m_inputs));
+            UniformInputEvaluator input_evaluator;
+            const InputValues* values =
+                static_cast<const InputValues*>(input_evaluator.evaluate(m_inputs));
 
             // Construct the Microfacet Distribution Function.
-            m_mdf = new WardMDF<double>(uniform_values->m_roughness);
+            m_mdf.reset(new WardMDF<double>(values->m_roughness));
 
             // Precompute the specular albedo curve.
-            compute_specular_albedo(*m_mdf, uniform_values->m_rs, m_a_spec);
+            Spectrum rs(values->m_rs);
+            rs *= static_cast<float>(values->m_rs_multiplier);
+            compute_specular_albedo(*m_mdf.get(), rs, m_a_spec);
 
             // Precompute the average specular albedo.
             Spectrum a_spec_avg;
@@ -141,19 +144,20 @@ namespace
             m_s /= s_denom;
 
             // plot_specular_albedo_curves();
+
+            return true;
         }
 
         virtual void on_frame_end(
-            const Project&              project,
-            const Assembly&             assembly)
+            const Project&      project,
+            const Assembly&     assembly)
         {
-            delete m_mdf;
-            m_mdf = 0;
+            m_mdf.reset();
 
             BSDF::on_frame_end(project, assembly);
         }
 
-        FORCE_INLINE virtual void sample(
+        FORCE_INLINE virtual Mode sample(
             SamplingContext&    sampling_context,
             const void*         data,
             const bool          adjoint,
@@ -163,8 +167,7 @@ namespace
             const Vector3d&     outgoing,
             Vector3d&           incoming,
             Spectrum&           value,
-            double&             probability,
-            Mode&               mode) const
+            double&             probability) const
         {
             const InputValues* values = static_cast<const InputValues*>(data);
 
@@ -183,6 +186,7 @@ namespace
             Spectrum matte_albedo(1.0f);
             matte_albedo -= specular_albedo_V;
             matte_albedo *= values->m_rm;
+            matte_albedo *= static_cast<float>(values->m_rm_multiplier);
 
             // Compute the probability of a specular bounce.
             const double specular_prob = average_value(specular_albedo_V);
@@ -194,6 +198,7 @@ namespace
             sampling_context.split_in_place(3, 1);
             const Vector3d s = sampling_context.next_vector2<3>();
 
+            Mode mode;
             Vector3d H;
             double dot_LN, dot_HN, dot_HV;
 
@@ -235,32 +240,27 @@ namespace
 
                 // No reflection in or below the shading surface.
                 if (dot_LN <= 0.0)
-                {
-                    mode = None;
-                    return;
-                }
+                    return Absorption;
             }
             else
             {
-                mode = None;
-                return;
+                return Absorption;
             }
 
             // No reflection in or below the geometric surface.
             const double cos_ig = dot(incoming, geometric_normal);
             if (cos_ig <= 0.0)
-            {
-                mode = None;
-                return;
-            }
+                return Absorption;
 
             // Compute the specular albedo for the incoming angle.
             Spectrum specular_albedo_L;
             evaluate_a_spec(m_a_spec, dot_LN, specular_albedo_L);
 
             // Specular component (equation 3).
+            Spectrum rs(values->m_rs);
+            rs *= static_cast<float>(values->m_rs_multiplier);
             Spectrum fr_spec;
-            evaluate_fr_spec(*m_mdf, values->m_rs, dot_HV, dot_HN, fr_spec);
+            evaluate_fr_spec(*m_mdf.get(), rs, dot_HV, dot_HN, fr_spec);
 
             // Matte component (last equation of section 2.2).
             value.set(1.0f);
@@ -283,6 +283,9 @@ namespace
             // Evaluate the final PDF.
             probability = specular_prob * pdf_specular + matte_prob * pdf_matte;
             assert(probability >= 0.0);
+
+            // Return the scattering mode.
+            return mode;
         }
 
         FORCE_INLINE virtual double evaluate(
@@ -293,9 +296,13 @@ namespace
             const Basis3d&      shading_basis,
             const Vector3d&     outgoing,
             const Vector3d&     incoming,
+            const int           modes,
             Spectrum&           value) const
         {
             const InputValues* values = static_cast<const InputValues*>(data);
+
+            value.set(0.0f);
+            double probability = 0.0;
 
             // Define aliases to match the notations in the paper.
             const Vector3d& V = outgoing;
@@ -315,41 +322,50 @@ namespace
             evaluate_a_spec(m_a_spec, dot_VN, specular_albedo_V);
             evaluate_a_spec(m_a_spec, dot_LN, specular_albedo_L);
 
-            // Compute the matte albedo.
-            Spectrum matte_albedo(1.0f);
-            matte_albedo -= specular_albedo_V;
-            matte_albedo *= values->m_rm;
+            if (modes & Diffuse)
+            {
+                // Compute the matte albedo.
+                Spectrum matte_albedo(1.0f);
+                matte_albedo -= specular_albedo_V;
+                matte_albedo *= values->m_rm;
+                matte_albedo *= static_cast<float>(values->m_rm_multiplier);
 
-            // Specular component (equation 3).
-            Spectrum fr_spec;
-            evaluate_fr_spec(*m_mdf, values->m_rs, dot_HL, dot_HN, fr_spec);
+                // Compute the matte component (last equation of section 2.2).
+                Spectrum matte_comp(1.0f);
+                matte_comp -= specular_albedo_L;
+                matte_comp *= matte_albedo;
+                matte_comp *= m_s;
+                value += matte_comp;
 
-            // Matte component (last equation of section 2.2).
-            value.set(1.0f);
-            value -= specular_albedo_L;
-            value *= matte_albedo;
-            value *= m_s;
+                // Compute the probability of a matte bounce.
+                const double matte_prob = average_value(matte_albedo);
 
-            // The final value of the BRDF is the sum of the specular and matte components.
-            value += fr_spec;
+                // Compute the PDF of the incoming direction for the matte component.
+                const double pdf_matte = dot_LN * RcpPi;
+                assert(pdf_matte >= 0.0);
+                probability += matte_prob * pdf_matte;
+            }
 
-            // Compute the probability of a specular bounce.
-            const double specular_prob = average_value(specular_albedo_V);
+            if (modes & Glossy)
+            {
+                // Compute the specular component (equation 3).
+                Spectrum rs(values->m_rs);
+                rs *= static_cast<float>(values->m_rs_multiplier);
+                Spectrum fr_spec;
+                evaluate_fr_spec(*m_mdf.get(), rs, dot_HL, dot_HN, fr_spec);
+                value += fr_spec;
 
-            // Compute the probability of a matte bounce.
-            const double matte_prob = average_value(matte_albedo);
+                // Compute the probability of a specular bounce.
+                const double specular_prob = average_value(specular_albedo_V);
 
-            // Compute the PDF of the incoming direction for the specular component.
-            const double pdf_H = m_mdf->evaluate_pdf(dot_HN);
-            const double pdf_specular = pdf_H / (4.0 * dot_HL);
-            assert(pdf_specular >= 0.0);
+                // Compute the PDF of the incoming direction for the specular component.
+                const double pdf_H = m_mdf->evaluate_pdf(dot_HN);
+                const double pdf_specular = pdf_H / (4.0 * dot_HL);
+                assert(pdf_specular >= 0.0);
+                probability += specular_prob * pdf_specular;
+            }
 
-            // Compute the PDF of the incoming direction for the matte component.
-            const double pdf_matte = dot_LN * RcpPi;
-            assert(pdf_matte >= 0.0);
-
-            // Evaluate the final PDF.
-            return specular_prob * pdf_specular + matte_prob * pdf_matte;
+            return probability;
         }
 
         FORCE_INLINE virtual double evaluate_pdf(
@@ -357,9 +373,12 @@ namespace
             const Vector3d&     geometric_normal,
             const Basis3d&      shading_basis,
             const Vector3d&     outgoing,
-            const Vector3d&     incoming) const
+            const Vector3d&     incoming,
+            const int           modes) const
         {
             const InputValues* values = static_cast<const InputValues*>(data);
+
+            double probability = 0.0;
 
             // Define aliases to match the notations in the paper.
             const Vector3d& V = outgoing;
@@ -378,43 +397,53 @@ namespace
             Spectrum specular_albedo_V;
             evaluate_a_spec(m_a_spec, dot_VN, specular_albedo_V);
 
-            // Compute the matte albedo.
-            Spectrum matte_albedo(1.0f);
-            matte_albedo -= specular_albedo_V;
-            matte_albedo *= values->m_rm;
+            if (modes & Diffuse)
+            {
+                // Compute the matte albedo.
+                Spectrum matte_albedo(1.0f);
+                matte_albedo -= specular_albedo_V;
+                matte_albedo *= values->m_rm;
+                matte_albedo *= static_cast<float>(values->m_rm_multiplier);
 
-            // Compute the probability of a specular bounce.
-            const double specular_prob = average_value(specular_albedo_V);
+                // Compute the probability of a matte bounce.
+                const double matte_prob = average_value(matte_albedo);
 
-            // Compute the probability of a matte bounce.
-            const double matte_prob = average_value(matte_albedo);
+                // Compute the PDF of the incoming direction for the matte component.
+                const double pdf_matte = dot_LN * RcpPi;
+                assert(pdf_matte >= 0.0);
+                probability += matte_prob * pdf_matte;
+            }
 
-            // Compute the PDF of the incoming direction for the specular component.
-            const double pdf_H = m_mdf->evaluate_pdf(dot_HN);
-            const double pdf_specular = pdf_H / (4.0 * dot_HL);
-            assert(pdf_specular >= 0.0);
+            if (modes & Glossy)
+            {
+                // Compute the probability of a specular bounce.
+                const double specular_prob = average_value(specular_albedo_V);
 
-            // Compute the PDF of the incoming direction for the matte component.
-            const double pdf_matte = dot_LN * RcpPi;
-            assert(pdf_matte >= 0.0);
+                // Compute the PDF of the incoming direction for the specular component.
+                const double pdf_H = m_mdf->evaluate_pdf(dot_HN);
+                const double pdf_specular = pdf_H / (4.0 * dot_HL);
+                assert(pdf_specular >= 0.0);
+                probability += specular_prob * pdf_specular;
+            }
 
-            // Evaluate the final PDF.
-            return specular_prob * pdf_specular + matte_prob * pdf_matte;
+            return probability;
         }
 
       private:
         struct InputValues
         {
-            Spectrum        m_rm;                       // matte reflectance of the substrate
-            Alpha           m_rm_alpha;                 // alpha channel of matte reflectance
-            Spectrum        m_rs;                       // specular reflectance at normal incidence
-            Alpha           m_rs_alpha;                 // alpha channel of specular reflectance
-            double          m_roughness;                // technically, root-mean-square of the microfacets slopes
+            Spectrum            m_rm;                           // matte reflectance of the substrate
+            Alpha               m_rm_alpha;                     // unused
+            double              m_rm_multiplier;                // matte reflectance multiplier
+            Spectrum            m_rs;                           // specular reflectance at normal incidence
+            Alpha               m_rs_alpha;                     // unused
+            double              m_rs_multiplier;                // specular reflectance multiplier
+            double              m_roughness;                    // technically, root-mean-square of the microfacets slopes
         };
 
-        WardMDF<double>*    m_mdf;                      // Microfacet Distribution Function
-        Spectrum            m_a_spec[AlbedoTableSize];  // albedo of the specular component as V varies
-        Spectrum            m_s;                        // normalization constant for the matte component
+        auto_ptr<WardMDF<double> >  m_mdf;                      // Microfacet Distribution Function
+        Spectrum                    m_a_spec[AlbedoTableSize];  // albedo of the specular component as V varies
+        Spectrum                    m_s;                        // normalization constant for the matte component
 
         // Evaluate the specular component of the BRDF (equation 3).
         template <typename MDF>
@@ -674,6 +703,16 @@ DictionaryArray KelemenBRDFFactory::get_widget_definitions() const
 
     definitions.push_back(
         Dictionary()
+            .insert("name", "matte_reflectance_multiplier")
+            .insert("label", "Matte Reflectance Multiplier")
+            .insert("widget", "entity_picker")
+            .insert("entity_types",
+                Dictionary().insert("texture_instance", "Textures"))
+            .insert("use", "optional")
+            .insert("default", "1.0"));
+
+    definitions.push_back(
+        Dictionary()
             .insert("name", "specular_reflectance")
             .insert("label", "Specular Reflectance")
             .insert("widget", "entity_picker")
@@ -681,6 +720,14 @@ DictionaryArray KelemenBRDFFactory::get_widget_definitions() const
                 Dictionary().insert("color", "Colors"))
             .insert("use", "required")
             .insert("default", ""));
+
+    definitions.push_back(
+        Dictionary()
+            .insert("name", "specular_reflectance_multiplier")
+            .insert("label", "Specular Reflectance Multiplier")
+            .insert("widget", "text_box")
+            .insert("use", "optional")
+            .insert("default", "1.0"));
 
     definitions.push_back(
         Dictionary()

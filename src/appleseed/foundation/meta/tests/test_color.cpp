@@ -28,12 +28,13 @@
 
 // appleseed.foundation headers.
 #include "foundation/image/color.h"
+#include "foundation/math/fp.h"
 #include "foundation/utility/iostreamop.h"
 #include "foundation/utility/test.h"
 
 // Imath headers.
 #ifdef APPLESEED_ENABLE_IMATH_INTEROP
-#include "openexr/ImathColor.h"
+#include "OpenEXR/ImathColor.h"
 #endif
 
 using namespace foundation;
@@ -41,6 +42,20 @@ using namespace std;
 
 TEST_SUITE(Foundation_Image_Color)
 {
+    TEST_CASE(TestClampLow)
+    {
+        const Color3d c(2.0, -4.0, 1.0);
+
+        EXPECT_EQ(Color3d(2.0, 0.5, 1.0), clamp_low(c, 0.5));
+    }
+
+    TEST_CASE(TestClampHigh)
+    {
+        const Color3d c(2.0, -4.0, 1.0);
+
+        EXPECT_EQ(Color3d(1.5, -4.0, 1.0), clamp_high(c, 1.5));
+    }
+
     TEST_CASE(TestMin)
     {
         const Color3d a(2.0, -4.0, 1.0);
@@ -62,6 +77,18 @@ TEST_SUITE(Foundation_Image_Color)
         EXPECT_FEQ(0.0, average_value(Color4d(0.0, 0.0, 0.0, 0.0)));
         EXPECT_FEQ(0.0, average_value(Color4d(-2.0, -1.0, 1.0, 2.0)));
         EXPECT_FEQ(2.5, average_value(Color4d(1.0, 2.0, 3.0, 4.0)));
+    }
+
+    TEST_CASE(TestHasNaN)
+    {
+        EXPECT_FALSE(has_nan(Color3d(0.0, 0.0, 0.0)));
+        EXPECT_FALSE(has_nan(Color3d(FP<double>::pos_inf(), 0.0, 0.0)));
+        EXPECT_FALSE(has_nan(Color3d(FP<double>::neg_inf(), 0.0, 0.0)));
+
+        EXPECT_TRUE(has_nan(Color3d(FP<double>::qnan(), 0.0, 0.0)));
+        EXPECT_TRUE(has_nan(Color3d(FP<double>::snan(), 0.0, 0.0)));
+        EXPECT_TRUE(has_nan(Color3d(0.0, 0.0, FP<double>::qnan())));
+        EXPECT_TRUE(has_nan(Color3d(0.0, 0.0, FP<double>::snan())));
     }
 }
 

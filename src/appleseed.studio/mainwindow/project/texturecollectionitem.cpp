@@ -31,6 +31,7 @@
 
 // appleseed.studio headers.
 #include "mainwindow/project/projectbuilder.h"
+#include "mainwindow/project/textureitem.h"
 #include "utility/interop.h"
 #include "utility/settingskeys.h"
 
@@ -67,25 +68,14 @@ namespace
 }
 
 TextureCollectionItem::TextureCollectionItem(
-    Scene&              scene,
     TextureContainer&   textures,
+    BaseGroup&          parent,
+    BaseGroupItem*      parent_item,
     ProjectBuilder&     project_builder,
     ParamArray&         settings)
   : CollectionItemBase<Texture>(g_class_uid, "Textures")
-  , m_assembly(0)
-  , m_project_builder(project_builder)
-  , m_settings(settings)
-{
-    add_items(textures);
-}
-
-TextureCollectionItem::TextureCollectionItem(
-    Assembly&           assembly,
-    TextureContainer&   textures,
-    ProjectBuilder&     project_builder,
-    ParamArray&         settings)
-  : CollectionItemBase<Texture>(g_class_uid, "Textures")
-  , m_assembly(&assembly)
+  , m_parent(parent)
+  , m_parent_item(parent_item)
   , m_project_builder(project_builder)
   , m_settings(settings)
 {
@@ -95,8 +85,8 @@ TextureCollectionItem::TextureCollectionItem(
 QMenu* TextureCollectionItem::get_single_item_context_menu() const
 {
     QMenu* menu = CollectionItemBase<Texture>::get_single_item_context_menu();
-    menu->addSeparator();
 
+    menu->addSeparator();
     menu->addAction("Import Textures...", this, SLOT(slot_import_textures()));
 
     return menu;
@@ -129,11 +119,15 @@ void TextureCollectionItem::slot_import_textures()
     for (int i = 0; i < filepaths.size(); ++i)
     {
         const string filepath = QDir::toNativeSeparators(filepaths[i]).toStdString();
-
-        if (m_assembly)
-            m_project_builder.insert_textures(*m_assembly, filepath);
-        else m_project_builder.insert_textures(filepath);
+        m_project_builder.insert_texture(m_parent, m_parent_item, filepath);
     }
+}
+
+ItemBase* TextureCollectionItem::create_item(Texture* texture) const
+{
+    assert(texture);
+
+    return new TextureItem(texture, m_parent, m_parent_item, m_project_builder);
 }
 
 }   // namespace studio

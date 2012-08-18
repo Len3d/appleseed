@@ -30,21 +30,28 @@
 #define APPLESEED_RENDERER_KERNEL_INTERSECTION_INTERSECTOR_H
 
 // appleseed.renderer headers.
-#include "renderer/global/global.h"
 #include "renderer/kernel/intersection/intersectionsettings.h"
 #include "renderer/kernel/intersection/regiontree.h"
 #include "renderer/kernel/intersection/triangletree.h"
-#include "renderer/kernel/shading/shadingray.h"
 #include "renderer/kernel/tessellation/statictessellation.h"
 #include "renderer/modeling/object/regionkit.h"
 
 // appleseed.foundation headers.
+#include "foundation/core/concepts/noncopyable.h"
 #include "foundation/math/bvh.h"
+#include "foundation/math/vector.h"
+#include "foundation/platform/types.h"
+
+// Standard headers.
+#include <cstddef>
 
 // Forward declarations.
-namespace renderer  { class ShadingPoint; }
-namespace renderer  { class TextureCache; }
-namespace renderer  { class TraceContext; }
+namespace foundation    { class StatisticsVector; }
+namespace renderer      { class AssemblyInstance; }
+namespace renderer      { class ShadingPoint; }
+namespace renderer      { class ShadingRay; }
+namespace renderer      { class TextureCache; }
+namespace renderer      { class TraceContext; }
 
 namespace renderer
 {
@@ -61,11 +68,7 @@ class Intersector
     Intersector(
         const TraceContext&             trace_context,
         TextureCache&                   texture_cache,
-        const bool                      print_statistics = false,
         const bool                      report_self_intersections = false);
-
-    // Destructor.
-    ~Intersector();
 
     // Refine the location of a point on a surface.
     static foundation::Vector3d refine(
@@ -101,16 +104,18 @@ class Intersector
     void manufacture_hit(
         ShadingPoint&                   shading_point,
         const ShadingRay&               shading_ray,
-        const foundation::UniqueID      assembly_instance_uid,
+        const AssemblyInstance*         assembly_instance,
         const size_t                    object_instance_index,
         const size_t                    region_index,
         const size_t                    triangle_index,
         const TriangleSupportPlaneType& triangle_support_plane) const;
 
+    // Retrieve performance statistics.
+    foundation::StatisticsVector get_statistics() const;
+
   private:
     const TraceContext&                             m_trace_context;
     TextureCache&                                   m_texture_cache;
-    const bool                                      m_print_statistics;
     const bool                                      m_report_self_intersections;
 
     // Access caches.
@@ -120,7 +125,7 @@ class Intersector
     mutable StaticTriangleTessAccessCache           m_tess_cache;
 
     // Intersection statistics.
-    mutable foundation::uint64                      m_ray_count;
+    mutable foundation::uint64                      m_shading_ray_count;
     mutable foundation::uint64                      m_probe_ray_count;
 #ifdef FOUNDATION_BVH_ENABLE_TRAVERSAL_STATS
     mutable foundation::bvh::TraversalStatistics    m_assembly_tree_traversal_stats;

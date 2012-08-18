@@ -242,6 +242,8 @@ class LightingConditions
   public:
     Color3f                     m_cmf[31];                  // precomputed values of (cmf[0], cmf[1], cmf[2]) * illuminant
 
+    LightingConditions();                                   // leaves the object uninitialized
+
     LightingConditions(
         const Spectrum31f&      illuminant,                 // illuminant
         const Spectrum31f       cmf[3]);                    // color matching functions
@@ -420,19 +422,25 @@ inline Color<T, 3> linear_rgb_to_hsl(const Color<T, 3>& linear_rgb)
 template <typename T>
 inline Color<T, 3> ciexyz_to_linear_rgb(const Color<T, 3>& xyz)
 {
-    return Color<T, 3>(
-        T( 3.240479) * xyz[0] + T(-1.537150) * xyz[1] + T(-0.498535) * xyz[2],
-        T(-0.969256) * xyz[0] + T( 1.875991) * xyz[1] + T( 0.041556) * xyz[2],
-        T( 0.055648) * xyz[0] + T(-0.204043) * xyz[1] + T( 1.057311) * xyz[2]);
+    return
+        clamp_low(
+            Color<T, 3>(
+                T( 3.240479) * xyz[0] + T(-1.537150) * xyz[1] + T(-0.498535) * xyz[2],
+                T(-0.969256) * xyz[0] + T( 1.875991) * xyz[1] + T( 0.041556) * xyz[2],
+                T( 0.055648) * xyz[0] + T(-0.204043) * xyz[1] + T( 1.057311) * xyz[2]),
+            T(0.0));
 }
 
 template <typename T>
 inline Color<T, 3> linear_rgb_to_ciexyz(const Color<T, 3>& linear_rgb)
 {
-    return Color<T, 3>(
-        T(0.412453) * linear_rgb[0] + T(0.357580) * linear_rgb[1] + T(0.180423) * linear_rgb[2],
-        T(0.212671) * linear_rgb[0] + T(0.715160) * linear_rgb[1] + T(0.072169) * linear_rgb[2],
-        T(0.019334) * linear_rgb[0] + T(0.119193) * linear_rgb[1] + T(0.950227) * linear_rgb[2]);
+    return
+        clamp_low(
+            Color<T, 3>(
+                T(0.412453) * linear_rgb[0] + T(0.357580) * linear_rgb[1] + T(0.180423) * linear_rgb[2],
+                T(0.212671) * linear_rgb[0] + T(0.715160) * linear_rgb[1] + T(0.072169) * linear_rgb[2],
+                T(0.019334) * linear_rgb[0] + T(0.119193) * linear_rgb[1] + T(0.950227) * linear_rgb[2]),
+            T(0.0));
 }
 
 
@@ -501,22 +509,26 @@ inline Color3f fast_linear_rgb_to_srgb(const Color3f& linear_rgb)
     };
 
     sse4f c = loadps(transfer);
-
-    // Compute y = pow(c, 1.0f / 2.4f), see foundation/math/fastmath.h for details.
-    const sse4f K = set1ps(127.0f);
     sse4f x = _mm_cvtepi32_ps(_mm_castps_si128(c));
-    x = mulps(x, set1ps(0.1192092896e-6f));
+
+    const sse4f K = set1ps(127.0f);
+    x = mulps(x, set1ps(0.1192092896e-6f));     // x *= pow(2.0f, -23)
     x = subps(x, K);
+
+    // One Newton-Raphson refinement step.
     sse4f z = subps(x, floorps(x));
     z = subps(z, mulps(z, z));
     z = mulps(z, set1ps(0.346607f));
     x = addps(x, z);
+
     x = mulps(x, set1ps(1.0f / 2.4f));
+
     sse4f y = subps(x, floorps(x));
     y = subps(y, mulps(y, y));
     y = mulps(y, set1ps(0.33971f));
     y = subps(addps(x, K), y);
-    y = mulps(y, set1ps(8388608.0f));
+    y = mulps(y, set1ps(8388608.0f));           // y *= pow(2.0f, 23)
+
     y = _mm_castsi128_ps(_mm_cvtps_epi32(y));
 
     // Compute both outcomes of the branch.

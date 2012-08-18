@@ -31,11 +31,17 @@
 
 // appleseed.renderer headers.
 #include "renderer/kernel/texturing/texturecache.h"
+#include "renderer/modeling/scene/textureinstance.h"
+#include "renderer/modeling/texture/texture.h"
 
 // appleseed.foundation headers.
 #include "foundation/image/tile.h"
 #include "foundation/math/hash.h"
 #include "foundation/math/scalar.h"
+#include "foundation/platform/types.h"
+
+// Standard headers.
+#include <cassert>
 
 using namespace foundation;
 using namespace std;
@@ -133,7 +139,7 @@ namespace
     inline void sample_tile(
         TextureCache&           texture_cache,
         const UniqueID          assembly_uid,
-        const size_t            texture_index,
+        const UniqueID          texture_uid,
         const size_t            tile_x,
         const size_t            tile_y,
         const size_t            pixel_x,
@@ -144,7 +150,7 @@ namespace
         const Tile& tile =
             texture_cache.get(
                 assembly_uid,
-                texture_index,
+                texture_uid,
                 tile_x,
                 tile_y);
 
@@ -168,13 +174,9 @@ TextureSource::TextureSource(
     const CanvasProperties&     texture_props)
   : Source(false)
   , m_assembly_uid(assembly_uid)
-  , m_texture_index(texture_instance.get_texture_index())
-  , m_addressing_mode(texture_instance.get_addressing_mode())
-  , m_filtering_mode(texture_instance.get_filtering_mode())
-  , m_multiplier(texture_instance.get_multiplier())
-  , m_lighting_conditions(      // todo: this should be user-settable
-        IlluminantCIED65,
-        XYZCMFCIE196410Deg)
+  , m_texture_instance(texture_instance)
+  , m_texture_uid(texture_instance.get_texture()->get_uid())
+  , m_lighting_conditions(texture_instance.get_lighting_conditions())
   , m_texture_props(texture_props)
   , m_scalar_canvas_width(static_cast<double>(texture_props.m_canvas_width))
   , m_scalar_canvas_height(static_cast<double>(texture_props.m_canvas_height))
@@ -205,7 +207,7 @@ Color4f TextureSource::get_texel(
         integer_to_color(
             mix32(
                 static_cast<uint32>(m_assembly_uid),
-                static_cast<uint32>(m_texture_index),
+                static_cast<uint32>(m_texture_uid),
                 static_cast<uint32>(tile_x),
                 static_cast<uint32>(tile_y)));
 
@@ -222,7 +224,7 @@ Color4f TextureSource::get_texel(
     sample_tile(
         texture_cache,
         m_assembly_uid,
-        m_texture_index,
+        m_texture_uid,
         tile_x,
         tile_y,
         pixel_x,
@@ -243,7 +245,7 @@ void TextureSource::get_texels_2x2(
 {
     const Vector<size_t, 2> p00 =
         constrain_to_canvas(
-            m_addressing_mode,
+            m_texture_instance.get_addressing_mode(),
             m_texture_props.m_canvas_width,
             m_texture_props.m_canvas_height,
             ix + 0,
@@ -251,7 +253,7 @@ void TextureSource::get_texels_2x2(
 
     const Vector<size_t, 2> p11 =
         constrain_to_canvas(
-            m_addressing_mode,
+            m_texture_instance.get_addressing_mode(),
             m_texture_props.m_canvas_width,
             m_texture_props.m_canvas_height,
             ix + 1,
@@ -282,7 +284,7 @@ void TextureSource::get_texels_2x2(
         sample_tile(
             texture_cache,
             m_assembly_uid,
-            m_texture_index,
+            m_texture_uid,
             tile_x_00,
             tile_y_00,
             pixel_x_00,
@@ -291,7 +293,7 @@ void TextureSource::get_texels_2x2(
         sample_tile(
             texture_cache,
             m_assembly_uid,
-            m_texture_index,
+            m_texture_uid,
             tile_x_11,
             tile_y_00,
             pixel_x_11,
@@ -300,7 +302,7 @@ void TextureSource::get_texels_2x2(
         sample_tile(
             texture_cache,
             m_assembly_uid,
-            m_texture_index,
+            m_texture_uid,
             tile_x_00,
             tile_y_11,
             pixel_x_00,
@@ -309,7 +311,7 @@ void TextureSource::get_texels_2x2(
         sample_tile(
             texture_cache,
             m_assembly_uid,
-            m_texture_index,
+            m_texture_uid,
             tile_x_11,
             tile_y_11,
             pixel_x_11,
@@ -330,7 +332,7 @@ void TextureSource::get_texels_2x2(
         const Tile& tile =
             texture_cache.get(
                 m_assembly_uid,
-                m_texture_index,
+                m_texture_uid,
                 tile_x_00,
                 tile_y_00);
 
@@ -382,9 +384,9 @@ Color4f TextureSource::sample_texture(
     p.y = 1.0 - p.y;
 
     // Apply the texture addressing mode.
-    apply_addressing_mode(m_addressing_mode, p);
+    apply_addressing_mode(m_texture_instance.get_addressing_mode(), p);
 
-    switch (m_filtering_mode)
+    switch (m_texture_instance.get_filtering_mode())
     {
       case TextureFilteringNearest:
         {

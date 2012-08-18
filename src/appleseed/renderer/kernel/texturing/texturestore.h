@@ -41,6 +41,7 @@
 #include <cstddef>
 
 // Forward declarations.
+namespace foundation    { class Statistics; }
 namespace foundation    { class Tile; }
 namespace renderer      { class Scene; }
 
@@ -58,25 +59,24 @@ class TextureStore
     struct TileKey
     {
         foundation::UniqueID            m_assembly_uid;
-        foundation::uint32              m_texture_index;
+        foundation::UniqueID            m_texture_uid;
         foundation::uint32              m_tile_xy;
 
         TileKey();
 
         TileKey(
             const foundation::UniqueID  assembly_uid,
-            const size_t                texture_index,
+            const foundation::UniqueID  texture_uid,
             const size_t                tile_x,
             const size_t                tile_y);
 
         TileKey(
             const foundation::UniqueID  assembly_uid,
-            const foundation::uint32    texture_index,
+            const foundation::UniqueID  texture_uid,
             const foundation::uint32    tile_xy);
 
         TileKey(const TileKey& rhs);
 
-        size_t get_texture_index() const;
         size_t get_tile_x() const;
         size_t get_tile_y() const;
 
@@ -100,14 +100,14 @@ class TextureStore
         const Scene&        scene,
         const size_t        memory_limit = 16 * 1024 * 1024);
 
-    // Destructor.
-    ~TextureStore();
-
     // Acquire an element from the cache. Thread-safe.
     TileRecord& acquire(const TileKey& key);
 
     // Release a previously-acquired element. Thread-safe.
     void release(TileRecord& record) const;
+
+    // Retrieve performance statistics.
+    foundation::StatisticsVector get_statistics() const;
 
   private:
     struct TileSwapper
@@ -155,38 +155,32 @@ inline TextureStore::TileKey::TileKey()
 
 inline TextureStore::TileKey::TileKey(
     const foundation::UniqueID  assembly_uid,
-    const size_t                texture_index,
+    const foundation::UniqueID  texture_uid,
     const size_t                tile_x,
     const size_t                tile_y)
   : m_assembly_uid(assembly_uid)
-  , m_texture_index(static_cast<foundation::uint32>(texture_index))
+  , m_texture_uid(texture_uid)
   , m_tile_xy(static_cast<foundation::uint32>((tile_y << 16) | tile_x))
 {
-    assert(texture_index == static_cast<foundation::uint32>(texture_index));
     assert(tile_x < (1UL << 16));
     assert(tile_y < (1UL << 16));
 }
 
 inline TextureStore::TileKey::TileKey(
     const foundation::UniqueID  assembly_uid,
-    const foundation::uint32    texture_index,
+    const foundation::UniqueID  texture_uid,
     const foundation::uint32    tile_xy)
   : m_assembly_uid(assembly_uid)
-  , m_texture_index(texture_index)
+  , m_texture_uid(texture_uid)
   , m_tile_xy(tile_xy)
 {
 }
 
 inline TextureStore::TileKey::TileKey(const TileKey& rhs)
   : m_assembly_uid(rhs.m_assembly_uid)
-  , m_texture_index(rhs.m_texture_index)
+  , m_texture_uid(rhs.m_texture_uid)
   , m_tile_xy(rhs.m_tile_xy)
 {
-}
-
-inline size_t TextureStore::TileKey::get_texture_index() const
-{
-    return static_cast<size_t>(m_texture_index);
 }
 
 inline size_t TextureStore::TileKey::get_tile_x() const
@@ -208,7 +202,7 @@ inline bool TextureStore::TileKey::operator==(const TileKey& rhs) const
 {
     return
         m_tile_xy == rhs.m_tile_xy &&
-        m_texture_index == rhs.m_texture_index &&
+        m_texture_uid == rhs.m_texture_uid &&
         m_assembly_uid == rhs.m_assembly_uid;
 }
 
@@ -221,9 +215,9 @@ inline bool TextureStore::TileKey::operator<(const TileKey& rhs) const
 {
     return
         m_assembly_uid == rhs.m_assembly_uid ?
-            m_texture_index == rhs.m_texture_index ?
+            m_texture_uid == rhs.m_texture_uid ?
                 m_tile_xy < rhs.m_tile_xy :
-            m_texture_index < rhs.m_texture_index :
+            m_texture_uid < rhs.m_texture_uid :
         m_assembly_uid < rhs.m_assembly_uid;
 }
 

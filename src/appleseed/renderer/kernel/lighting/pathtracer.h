@@ -30,23 +30,28 @@
 #define APPLESEED_RENDERER_KERNEL_LIGHTING_PATHTRACER_H
 
 // appleseed.renderer headers.
-#include "renderer/global/global.h"
+#include "renderer/global/globallogger.h"
+#include "renderer/global/globaltypes.h"
 #include "renderer/kernel/intersection/intersector.h"
 #include "renderer/kernel/shading/shadingpoint.h"
 #include "renderer/kernel/shading/shadingray.h"
 #include "renderer/modeling/bsdf/bsdf.h"
 #include "renderer/modeling/edf/edf.h"
 #include "renderer/modeling/input/inputevaluator.h"
+#include "renderer/modeling/input/source.h"
 #include "renderer/modeling/material/material.h"
-#include "renderer/modeling/surfaceshader/surfaceshader.h"
 
 // appleseed.foundation headers.
+#include "foundation/core/concepts/noncopyable.h"
 #include "foundation/math/basis.h"
 #include "foundation/math/rr.h"
+#include "foundation/math/vector.h"
 #include "foundation/utility/string.h"
 
 // Standard headers.
 #include <algorithm>
+#include <cassert>
+#include <cstddef>
 
 // Forward declarations.
 namespace renderer  { class TextureCache; }
@@ -58,14 +63,16 @@ namespace renderer
 // A generic path tracer.
 //
 
-template <typename PathVisitor, int ScatteringModesMask, bool Adjoint>
+template <typename PathVisitor, bool Adjoint>
 class PathTracer
+  : public foundation::NonCopyable
 {
   public:
     PathTracer(
         PathVisitor&            path_visitor,
         const size_t            rr_min_path_length,
-        const size_t            max_path_length);
+        const size_t            max_path_length,
+        const size_t            max_iterations = 10000);
 
     size_t trace(
         SamplingContext&        sampling_context,
@@ -84,6 +91,7 @@ class PathTracer
     PathVisitor&                m_path_visitor;
     const size_t                m_rr_min_path_length;
     const size_t                m_max_path_length;
+    const size_t                m_max_iterations;
 };
 
 
@@ -91,19 +99,21 @@ class PathTracer
 // PathTracer class implementation.
 //
 
-template <typename PathVisitor, int ScatteringModesMask, bool Adjoint>
-inline PathTracer<PathVisitor, ScatteringModesMask, Adjoint>::PathTracer(
+template <typename PathVisitor, bool Adjoint>
+inline PathTracer<PathVisitor, Adjoint>::PathTracer(
     PathVisitor&                path_visitor,
     const size_t                rr_min_path_length,
-    const size_t                max_path_length)
+    const size_t                max_path_length,
+    const size_t                max_iterations)
   : m_path_visitor(path_visitor)
   , m_rr_min_path_length(rr_min_path_length)
   , m_max_path_length(max_path_length)
+  , m_max_iterations(max_iterations)
 {
 }
 
-template <typename PathVisitor, int ScatteringModesMask, bool Adjoint>
-inline size_t PathTracer<PathVisitor, ScatteringModesMask, Adjoint>::trace(
+template <typename PathVisitor, bool Adjoint>
+inline size_t PathTracer<PathVisitor, Adjoint>::trace(
     SamplingContext&            sampling_context,
     const Intersector&          intersector,
     TextureCache&               texture_cache,
@@ -121,8 +131,8 @@ inline size_t PathTracer<PathVisitor, ScatteringModesMask, Adjoint>::trace(
             shading_point);
 }
 
-template <typename PathVisitor, int ScatteringModesMask, bool Adjoint>
-size_t PathTracer<PathVisitor, ScatteringModesMask, Adjoint>::trace(
+template <typename PathVisitor, bool Adjoint>
+size_t PathTracer<PathVisitor, Adjoint>::trace(
     SamplingContext&            sampling_context,
     const Intersector&          intersector,
     TextureCache&               texture_cache,
@@ -133,20 +143,19 @@ size_t PathTracer<PathVisitor, ScatteringModesMask, Adjoint>::trace(
     const ShadingPoint* shading_point_ptr = &shading_point;
 
     Spectrum throughput(1.0f);
-    BSDF::Mode bsdf_mode = BSDF::Specular;
-    double bsdf_prob = BSDF::DiracDelta;
+    BSDF::Mode prev_bsdf_mode = BSDF::Specular;
+    double prev_bsdf_prob = BSDF::DiracDelta;
     size_t path_length = 1;
     size_t iterations = 0;
 
     while (true)
     {
         // Put a hard limit on the number of iterations.
-        const size_t MaxIterations = 10000;
-        if (++iterations >= MaxIterations)
+        if (++iterations >= m_max_iterations)
         {
             RENDERER_LOG_WARNING(
                 "reached hard iteration limit (%s), breaking path trace loop.",
-                foundation::pretty_int(MaxIterations).c_str());
+                foundation::pretty_int(m_max_iterations).c_str());
             break;
         }
 
@@ -158,10 +167,9 @@ size_t PathTracer<PathVisitor, ScatteringModesMask, Adjoint>::trace(
         {
             m_path_visitor.visit_environment(
                 *shading_point_ptr,
-                normalize(-ray.m_dir),
-                bsdf_mode,
+                foundation::normalize(-ray.m_dir),
+                prev_bsdf_mode,
                 throughput);
-
             break;
         }
 
@@ -170,47 +178,44 @@ size_t PathTracer<PathVisitor, ScatteringModesMask, Adjoint>::trace(
         if (material == 0)
             break;
 
-        // Retrieve the surface shader.
-        const SurfaceShader* surface_shader = material->get_surface_shader();
-        if (surface_shader == 0)
-            break;
-
-        // Evaluate the alpha mask at the shading point.
-        Alpha alpha_mask;
-        surface_shader->evaluate_alpha_mask(
-            sampling_context,
-            texture_cache,
-            *shading_point_ptr,
-            alpha_mask);
-
-        // Handle alpha masking.
-        if (alpha_mask[0] < 1.0)
+        // Handle alpha mapping.
+        if (path_length > 1 && material->get_alpha_map())
         {
-            // Generate a uniform sample in [0,1).
-            sampling_context.split_in_place(1, 1);
-            const double s = sampling_context.next_double2();
+            // Evaluate the alpha map at the shading point.
+            Alpha alpha;
+            material->get_alpha_map()->evaluate(
+                texture_cache, 
+                shading_point_ptr->get_uv(0),
+                alpha);
 
-            if (s >= alpha_mask[0])
+            if (alpha[0] < 1.0)
             {
-                // Construct a ray that continues in the same direction as the incoming ray.
-                const ShadingRay cutoff_ray(
-                    shading_point_ptr->get_point(),
-                    ray.m_dir,
-                    ray.m_time,
-                    ~0);            // ray flags
+                // Generate a uniform sample in [0,1).
+                sampling_context.split_in_place(1, 1);
+                const double s = sampling_context.next_double2();
 
-                // Trace the ray.
-                shading_points[shading_point_index].clear();
-                intersector.trace(
-                    cutoff_ray,
-                    shading_points[shading_point_index],
-                    shading_point_ptr);
+                if (s >= alpha[0])
+                {
+                    // Construct a ray that continues in the same direction as the incoming ray.
+                    const ShadingRay cutoff_ray(
+                        shading_point_ptr->get_point(),
+                        ray.m_dir,
+                        ray.m_time,
+                        ~0);            // ray flags
 
-                // Update the pointers to the shading points.
-                shading_point_ptr = &shading_points[shading_point_index];
-                shading_point_index = 1 - shading_point_index;
+                    // Trace the ray.
+                    shading_points[shading_point_index].clear();
+                    intersector.trace(
+                        cutoff_ray,
+                        shading_points[shading_point_index],
+                        shading_point_ptr);
 
-                continue;
+                    // Update the pointers to the shading points.
+                    shading_point_ptr = &shading_points[shading_point_index];
+                    shading_point_index = 1 - shading_point_index;
+
+                    continue;
+                }
             }
         }
 
@@ -227,7 +232,7 @@ size_t PathTracer<PathVisitor, ScatteringModesMask, Adjoint>::trace(
         const void* bsdf_data = bsdf_input_evaluator.data();
 
         // Compute the outgoing direction.
-        const foundation::Vector3d outgoing = normalize(-ray.m_dir);
+        const foundation::Vector3d outgoing = foundation::normalize(-ray.m_dir);
 
         // Compute radiance contribution at this vertex.
         if (!m_path_visitor.visit_vertex(
@@ -236,30 +241,35 @@ size_t PathTracer<PathVisitor, ScatteringModesMask, Adjoint>::trace(
                 outgoing,
                 bsdf,
                 bsdf_data,
-                bsdf_mode,
-                bsdf_prob,
+                path_length,
+                prev_bsdf_mode,
+                prev_bsdf_prob,
                 throughput))
             break;
 
         // Sample the BSDF.
         foundation::Vector3d incoming;
         Spectrum bsdf_value;
-        bsdf->sample(
-            sampling_context,
-            bsdf_data,
-            Adjoint,
-            true,       // multiply by |cos(incoming, normal)|
-            shading_point_ptr->get_geometric_normal(),
-            shading_point_ptr->get_shading_basis(),
-            outgoing,
-            incoming,
-            bsdf_value,
-            bsdf_prob,
-            bsdf_mode);
+        double bsdf_prob;
+        const BSDF::Mode bsdf_mode =
+            bsdf->sample(
+                sampling_context,
+                bsdf_data,
+                Adjoint,
+                true,       // multiply by |cos(incoming, normal)|
+                shading_point_ptr->get_geometric_normal(),
+                shading_point_ptr->get_shading_basis(),
+                outgoing,
+                incoming,
+                bsdf_value,
+                bsdf_prob);
 
         // Terminate the path if this scattering mode is not accepted.
-        if (!(bsdf_mode & ScatteringModesMask))
+        if (!m_path_visitor.accept_scattering_mode(prev_bsdf_mode, bsdf_mode))
             break;
+
+        prev_bsdf_prob = bsdf_prob;
+        prev_bsdf_mode = bsdf_mode;
 
         if (bsdf_prob != BSDF::DiracDelta)
             bsdf_value /= static_cast<float>(bsdf_prob);

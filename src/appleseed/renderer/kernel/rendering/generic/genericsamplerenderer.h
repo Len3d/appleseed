@@ -30,8 +30,11 @@
 #define APPLESEED_RENDERER_KERNEL_RENDERING_GENERIC_GENERICSAMPLERENDERER_H
 
 // appleseed.renderer headers.
-#include "renderer/global/global.h"
 #include "renderer/kernel/rendering/isamplerenderer.h"
+#include "renderer/utility/paramarray.h"
+
+// appleseed.foundation headers.
+#include "foundation/platform/compiler.h"
 
 // Forward declarations.
 namespace renderer  { class Frame; }
@@ -48,7 +51,7 @@ namespace renderer
 // Generic sample renderer factory.
 //
 
-class RENDERERDLL GenericSampleRendererFactory
+class GenericSampleRendererFactory
   : public ISampleRendererFactory
 {
   public:
@@ -63,10 +66,10 @@ class RENDERERDLL GenericSampleRendererFactory
         const ParamArray&       params);
 
     // Delete this instance.
-    virtual void release();
+    virtual void release() override;
 
     // Return a new generic sample renderer instance.
-    virtual ISampleRenderer* create();
+    virtual ISampleRenderer* create() override;
 
     // Return a new generic sample renderer instance.
     static ISampleRenderer* create(

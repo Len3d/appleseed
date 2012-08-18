@@ -71,7 +71,8 @@ class RENDERERDLL Light
     const foundation::Transformd& get_transform() const;
 
     // This method is called once before rendering each frame.
-    virtual void on_frame_begin(
+    // Returns true on success, false otherwise.
+    virtual bool on_frame_begin(
         const Project&                  project,
         const Assembly&                 assembly);
 
@@ -105,6 +106,9 @@ class RENDERERDLL Light
     virtual double evaluate_pdf(
         const void*                     data,                       // input values
         const foundation::Vector3d&     outgoing) const = 0;        // world space emission direction, unit-length
+
+  protected:
+    void check_exitance_input_non_null(const char* input_name) const;
 
   private:
     struct Impl;

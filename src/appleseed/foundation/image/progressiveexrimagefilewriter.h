@@ -35,7 +35,7 @@
 #include "foundation/image/iprogressiveimagefilewriter.h"
 
 // OpenEXR headers.
-#include "openexr/ImfTiledOutputFile.h"
+#include "OpenEXR/ImfTiledOutputFile.h"
 
 // Standard headers.
 #include <cstddef>
@@ -105,7 +105,7 @@ class FOUNDATIONDLL ProgressiveEXRImageFileWriter
         const Tile&                     tile,
         const size_t                    tile_x,
         const size_t                    tile_y);
-        
+
   private:
     struct Impl;
     Impl* impl;

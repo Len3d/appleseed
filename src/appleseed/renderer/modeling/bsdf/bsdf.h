@@ -71,16 +71,41 @@ class DLLSYMBOL BSDF
   : public ConnectableEntity
 {
   public:
+    // BSDF types.
+    enum Type
+    {
+        Reflective          = 1 << 0,
+        Transmissive        = 1 << 1
+    };
+
+    // Scattering modes.
+    enum Mode
+    {
+        Absorption          = 0,
+        Diffuse             = 1 << 0,
+        Glossy              = 1 << 1,
+        Specular            = 1 << 2,
+        AllScatteringModes  = Diffuse | Glossy | Specular
+    };
+
+    // Use a particular (negative) value as the probability density
+    // of the Dirac Delta in order to detect incorrect usages.
+    static const double DiracDelta;
+
     // Constructor.
     BSDF(
         const char*                 name,
+        const Type                  type,
         const ParamArray&           params);
 
     // Return a string identifying the model of this entity.
     virtual const char* get_model() const = 0;
 
+    Type get_type() const;
+
     // This method is called once before rendering each frame.
-    virtual void on_frame_begin(
+    // Returns true on success, false otherwise.
+    virtual bool on_frame_begin(
         const Project&              project,
         const Assembly&             assembly);
 
@@ -102,24 +127,11 @@ class DLLSYMBOL BSDF
         const foundation::Vector2d& uv,
         const size_t                offset = 0) const;
 
-    // Scattering modes.
-    enum Mode
-    {
-        None        = 0,            // absorption
-        Diffuse     = 1 << 0,       // diffuse reflection
-        Glossy      = 1 << 1,       // glossy reflection
-        Specular    = 1 << 2        // specular reflection
-    };
-
-    // Assign a particular (negative) value to the probability density of
-    // the Dirac Delta in order to detect incorrect usages.
-    static const double DiracDelta;
-
     // Given an outgoing direction, sample the BSDF and compute the incoming
-    // direction, the probability density with which it was chosen, the value
-    // of the BSDF for this pair of directions and the scattering mode.
-    // If the scattering mode is None, the BSDF and PDF values are undefined.
-    virtual void sample(
+    // direction, the probability density with which it was chosen and the value
+    // of the BSDF for this pair of directions. Return the scattering mode.
+    // If the scattering mode is Absorption, the BSDF and PDF values are undefined.
+    virtual Mode sample(
         SamplingContext&            sampling_context,
         const void*                 data,                       // input values
         const bool                  adjoint,                    // if true, use the adjoint scattering kernel
@@ -129,8 +141,7 @@ class DLLSYMBOL BSDF
         const foundation::Vector3d& outgoing,                   // world space outgoing direction, unit-length
         foundation::Vector3d&       incoming,                   // world space incoming direction, unit-length
         Spectrum&                   value,                      // BSDF value, or BSDF value * |cos(incoming, normal)|
-        double&                     probability,                // PDF value
-        Mode&                       mode) const = 0;            // scattering mode
+        double&                     probability) const = 0;     // PDF value
 
     // Evaluate the BSDF for a given pair of directions. Return the PDF value
     // for this pair of directions. If the returned probability is zero, the
@@ -143,6 +154,7 @@ class DLLSYMBOL BSDF
         const foundation::Basis3d&  shading_basis,              // world space orthonormal basis around shading normal
         const foundation::Vector3d& outgoing,                   // world space outgoing direction, unit-length
         const foundation::Vector3d& incoming,                   // world space incoming direction, unit-length
+        const int                   modes,                      // selected scattering modes
         Spectrum&                   value) const = 0;           // BSDF value, or BSDF value * |cos(incoming, normal)|
 
     // Evaluate the PDF for a given pair of directions.
@@ -151,19 +163,28 @@ class DLLSYMBOL BSDF
         const foundation::Vector3d& geometric_normal,           // world space geometric normal, unit-length
         const foundation::Basis3d&  shading_basis,              // world space orthonormal basis around shading normal
         const foundation::Vector3d& outgoing,                   // world space outgoing direction, unit-length
-        const foundation::Vector3d& incoming) const = 0;        // world space incoming direction, unit-length
+        const foundation::Vector3d& incoming,                   // world space incoming direction, unit-length
+        const int                   modes) const = 0;           // selected scattering modes
 
   protected:
     // Force a given direction to lie above a surface described by its normal vector.
     static foundation::Vector3d force_above_surface(
         const foundation::Vector3d& direction,
         const foundation::Vector3d& normal);
+
+  private:
+    const Type m_type;
 };
 
 
 //
 // BSDF class implementation.
 //
+
+inline BSDF::Type BSDF::get_type() const
+{
+    return m_type;
+}
 
 inline foundation::Vector3d BSDF::force_above_surface(
     const foundation::Vector3d& direction,

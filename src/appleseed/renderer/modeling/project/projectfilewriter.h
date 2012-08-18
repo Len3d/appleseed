@@ -45,18 +45,18 @@ namespace renderer
 class RENDERERDLL ProjectFileWriter
 {
   public:
-    // Writing options.
     enum Options
     {
-        Defaults            = 0,
-        OmitHeaderComment   = 1 << 0,
-        OmitMeshFiles       = 1 << 1
+        Defaults                = 0,        // none of the flags below
+        OmitHeaderComment       = 1 << 0,   // do not write the header comment
+        OmitWritingMeshFiles    = 1 << 1,   // do not write mesh files to disk
+        OmitCopyingAssets       = 1 << 2    // do not copy asset files (such as texture files) to reside alongside the project file
     };
 
-    // Write a project to disk. The project must be named.
-    // Return true on success, false otherwise.
+    // Write a project to disk. Return true on success, false otherwise.
     static bool write(
         const Project&  project,
+        const char*     filepath,
         const Options   options = Defaults);
 };
 

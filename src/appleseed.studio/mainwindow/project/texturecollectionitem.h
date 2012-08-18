@@ -36,11 +36,17 @@
 #include "renderer/api/scene.h"
 #include "renderer/api/texture.h"
 
+// appleseed.foundation headers.
+#include "foundation/platform/compiler.h"
+
 // Qt headers.
 #include <QObject>
 
 // Forward declarations.
+namespace appleseed { namespace studio { class BaseGroupItem; } }
+namespace appleseed { namespace studio { class ItemBase; } }
 namespace appleseed { namespace studio { class ProjectBuilder; } }
+namespace renderer  { class BaseGroup; }
 namespace renderer  { class ParamArray; }
 class QMenu;
 
@@ -54,26 +60,24 @@ class TextureCollectionItem
 
   public:
     TextureCollectionItem(
-        renderer::Scene&            scene,
         renderer::TextureContainer& textures,
+        renderer::BaseGroup&        parent,
+        BaseGroupItem*              parent_item,
         ProjectBuilder&             project_builder,
         renderer::ParamArray&       settings);
 
-    TextureCollectionItem(
-        renderer::Assembly&         assembly,
-        renderer::TextureContainer& textures,
-        ProjectBuilder&             project_builder,
-        renderer::ParamArray&       settings);
-
-    virtual QMenu* get_single_item_context_menu() const;
+    virtual QMenu* get_single_item_context_menu() const override;
 
   public slots:
     void slot_import_textures();
 
   private:
-    renderer::Assembly*             m_assembly;
+    renderer::BaseGroup&            m_parent;
+    BaseGroupItem*                  m_parent_item;
     ProjectBuilder&                 m_project_builder;
     renderer::ParamArray&           m_settings;
+
+    virtual ItemBase* create_item(renderer::Texture* texture) const override;
 };
 
 }       // namespace studio

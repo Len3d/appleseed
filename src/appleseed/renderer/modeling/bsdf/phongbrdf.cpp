@@ -62,7 +62,7 @@ namespace
         PhongBRDFImpl(
             const char*         name,
             const ParamArray&   params)
-          : BSDF(name, params)
+          : BSDF(name, Reflective, params)
         {
         }
 
@@ -76,7 +76,7 @@ namespace
             return Model;
         }
 
-        FORCE_INLINE virtual void sample(
+        FORCE_INLINE virtual Mode sample(
             SamplingContext&    sampling_context,
             const void*         data,
             const bool          adjoint,
@@ -86,10 +86,10 @@ namespace
             const Vector3d&     outgoing,
             Vector3d&           incoming,
             Spectrum&           value,
-            double&             probability,
-            Mode&               mode) const
+            double&             probability) const
         {
             throw ExceptionNotImplemented();
+            return Absorption;
         }
 
         FORCE_INLINE virtual double evaluate(
@@ -100,6 +100,7 @@ namespace
             const Basis3d&      shading_basis,
             const Vector3d&     outgoing,
             const Vector3d&     incoming,
+            const int           modes,
             Spectrum&           value) const
         {
             throw ExceptionNotImplemented();
@@ -111,7 +112,8 @@ namespace
             const Vector3d&     geometric_normal,
             const Basis3d&      shading_basis,
             const Vector3d&     outgoing,
-            const Vector3d&     incoming) const
+            const Vector3d&     incoming,
+            const int           modes) const
         {
             throw ExceptionNotImplemented();
             return 0.0;

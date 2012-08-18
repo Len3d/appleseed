@@ -30,16 +30,24 @@
 #include "meshobjectreader.h"
 
 // appleseed.renderer headers.
+#include "renderer/global/globallogger.h"
+#include "renderer/global/globaltypes.h"
 #include "renderer/modeling/object/meshobject.h"
 #include "renderer/modeling/object/triangle.h"
+#include "renderer/utility/paramarray.h"
 
 // appleseed.foundation headers.
 #include "foundation/core/exceptions/exceptionioerror.h"
+#include "foundation/math/scalar.h"
 #include "foundation/math/triangulator.h"
+#include "foundation/math/vector.h"
 #include "foundation/mesh/genericmeshfilereader.h"
 #include "foundation/mesh/imeshbuilder.h"
 #include "foundation/mesh/imeshfilereader.h"
 #include "foundation/mesh/objmeshfilereader.h"
+#include "foundation/platform/defaulttimers.h"
+#include "foundation/platform/types.h"
+#include "foundation/utility/autoreleaseptr.h"
 #include "foundation/utility/foreach.h"
 #include "foundation/utility/memory.h"
 #include "foundation/utility/searchpaths.h"
@@ -48,8 +56,11 @@
 
 // Standard headers.
 #include <algorithm>
+#include <cassert>
+#include <cstddef>
 #include <exception>
 #include <map>
+#include <string>
 #include <vector>
 
 using namespace foundation;
@@ -86,6 +97,7 @@ namespace
           , m_untitled_mesh_counter(0)
           , m_vertex_count(0)
           , m_face_material(0)
+          , m_triangulator(Triangulator<double>::KeepDegenerateTriangles)
           , m_face_count(0)
           , m_triangulation_error_count(0)
           , m_total_vertex_count(0)
@@ -176,8 +188,10 @@ namespace
 
             if (m_vertex_count > 3)
             {
+                assert(m_polygon.empty());
+                assert(m_triangles.empty());
+
                 // Create the polygon to triangulate.
-                clear_keep_memory(m_polygon);
                 for (size_t i = 0; i < m_vertex_count; ++i)
                 {
                     m_polygon.push_back(
@@ -185,23 +199,30 @@ namespace
                 }
 
                 // Triangulate the polygon.
-                clear_keep_memory(m_triangles);
-                if (!m_triangulator.triangulate(m_polygon, m_triangles))
+                if (m_triangulator.triangulate(m_polygon, m_triangles))
                 {
-                    // Skip problematic polygonal faces.
+                    // Insert all triangles of the triangulation into the mesh.
+                    const size_t m_triangle_count = m_triangles.size();
+                    for (size_t i = 0; i < m_triangle_count; i += 3)
+                    {
+                        insert_triangle(
+                            m_triangles[i + 0],
+                            m_triangles[i + 1],
+                            m_triangles[i + 2]);
+                    }
+                }
+                else
+                {
+                    // The polygon could not be triangulated.
                     ++m_triangulation_error_count;
-                    return;
+
+                    // Insert 0-area triangle to ensure the right number of triangles in the result mesh.
+                    for (size_t i = 0; i < m_vertex_count - 2; ++i)
+                        insert_triangle(0, 0, 0);
                 }
 
-                // Insert all triangles of the triangulation into the mesh.
-                const size_t m_triangle_count = m_triangles.size();
-                for (size_t i = 0; i < m_triangle_count; i += 3)
-                {
-                    insert_triangle(
-                        m_triangles[i + 0],
-                        m_triangles[i + 1],
-                        m_triangles[i + 2]);
-                }
+                clear_keep_memory(m_polygon);
+                clear_keep_memory(m_triangles);
             }
             else
             {
@@ -341,10 +362,11 @@ namespace
         }
     };
 
-    MeshObjectArray read_mesh_object(
+    bool read_mesh_object(
         const char*             filename,
         const char*             base_object_name,
-        const ParamArray&       params)
+        const ParamArray&       params,
+        MeshObjectArray&        objects)
     {
         GenericMeshFileReader reader(filename);
 
@@ -389,7 +411,7 @@ namespace
                 filename,
                 e.m_line);
 
-            return MeshObjectArray();
+            return false;
         }
         catch (const OBJMeshFileReader::ExceptionParseError& e)
         {
@@ -398,7 +420,7 @@ namespace
                 filename,
                 e.m_line);
 
-            return MeshObjectArray();
+            return false;
         }
         catch (const ExceptionIOError&)
         {
@@ -406,7 +428,7 @@ namespace
                 "failed to load mesh file %s: i/o error.",
                 filename);
 
-            return MeshObjectArray();
+            return false;
         }
         catch (const exception& e)
         {
@@ -415,7 +437,7 @@ namespace
                 filename,
                 e.what());
 
-            return MeshObjectArray();
+            return false;
         }
 
         stopwatch.measure();
@@ -431,7 +453,9 @@ namespace
             plural(builder.get_total_triangle_count(), "triangle").c_str(),
             pretty_time(stopwatch.get_seconds()).c_str());
 
-        return array_vector<MeshObjectArray>(builder.get_objects());
+        objects = array_vector<MeshObjectArray>(builder.get_objects());
+
+        return true;
     }
 
     bool set_vertex_poses(
@@ -474,6 +498,18 @@ namespace
                 return false;
             }
 
+            if (object->get_triangle_count() != object_next->get_triangle_count())
+            {
+                RENDERER_LOG_WARNING(
+                    "while reading key frame for object \"%s\" from mesh file %s: "
+                    "expected " FMT_SIZE_T " %s, got " FMT_SIZE_T ".",
+                    object->get_name(),
+                    filename,
+                    object->get_triangle_count(),
+                    object->get_triangle_count() > 1 ? "triangles" : "triangle",
+                    object_next->get_triangle_count());
+            }
+
             const size_t vertex_count = object_next->get_vertex_count();
 
             for (size_t j = 0; j < vertex_count; ++j)
@@ -508,11 +544,12 @@ namespace
         }
     };
 
-    MeshObjectArray read_key_framed_mesh_object(
+    bool read_key_framed_mesh_object(
         const SearchPaths&      search_paths,
         const StringDictionary& filenames,
         const char*             base_object_name,
-        const ParamArray&       params)
+        const ParamArray&       params,
+        MeshObjectArray&        objects)
     {
         vector<MeshObjectKeyFrame> key_frames;
 
@@ -521,11 +558,12 @@ namespace
 
         sort(key_frames.begin(), key_frames.end());
 
-        const MeshObjectArray objects =
-            read_mesh_object(
+        if (!read_mesh_object(
                 search_paths.qualify(key_frames[0].m_filename).c_str(),
                 base_object_name,
-                params);
+                params,
+                objects))
+            return false;
 
         for (size_t i = 0; i < objects.size(); ++i)
             objects[i]->set_motion_segment_count(key_frames.size() - 1);
@@ -534,60 +572,34 @@ namespace
         {
             const string& filename = key_frames[i].m_filename;
 
-            const MeshObjectArray key_frame =
-                read_mesh_object(
+            MeshObjectArray key_frame;
+
+            if (!read_mesh_object(
                     search_paths.qualify(filename).c_str(),
                     base_object_name,
-                    params);
+                    params,
+                    key_frame))
+                return false;
 
             if (!set_vertex_poses(objects, key_frame, i - 1, filename.c_str(), base_object_name))
-                break;
+                return false;
         }
 
-        return objects;
-    }
-
-    ParamArray complete_mesh_objects_params(
-        ParamArray              params,
-        const SearchPaths&      search_paths,
-        const char*             base_object_name)
-    {
-        // Tag objects with the name of their parent.
-        params.insert("__base_object_name", base_object_name);
-
-        // Qualify all filenames.
-        if (params.strings().exist("filename"))
-        {
-            const string filename = params.get<string>("filename");
-            const string filepath = search_paths.qualify(filename);
-            params.insert("filename", filepath);
-        }
-        else if (params.dictionaries().exist("filename"))
-        {
-            StringDictionary& filepaths = params.dictionaries().get("filename").strings();
-            for (const_each<StringDictionary> i = filepaths; i; ++i)
-            {
-                const string filename = i->value<string>();
-                const string filepath = search_paths.qualify(filename);
-                filepaths.insert(i->name(), filepath);
-            }
-        }
-
-        return params;
+        return true;
     }
 }
 
-MeshObjectArray MeshObjectReader::read(
+bool MeshObjectReader::read(
     const SearchPaths&  search_paths,
     const char*         base_object_name,
-    const ParamArray&   params)
+    const ParamArray&   params,
+    MeshObjectArray&    objects)
 {
     assert(base_object_name);
 
-    const ParamArray completed_params =
-        complete_mesh_objects_params(params, search_paths, base_object_name);
-
-    MeshObjectArray objects;
+    // Tag objects with the name of their parent.
+    ParamArray completed_params(params);
+    completed_params.insert("__base_object_name", base_object_name);
 
     if (params.strings().exist("filename"))
     {
@@ -597,37 +609,53 @@ MeshObjectArray MeshObjectReader::read(
                 "while reading geometry for object \"%s\": conflicting presence "
                 "of both a \"filename\" parameter and a \"filename\" parameter group.",
                 base_object_name);
+
+            return false;
         }
-        else
-        {
-            objects =
-                read_mesh_object(
-                    search_paths.qualify(params.strings().get<string>("filename")).c_str(),
-                    base_object_name,
-                    completed_params);
-        }
+
+        // Single-pose object.
+        if (!read_mesh_object(
+                search_paths.qualify(params.strings().get<string>("filename")).c_str(),
+                base_object_name,
+                completed_params,
+                objects))
+            return false;
     }
     else
     {
         if (params.dictionaries().exist("filename"))
         {
             const StringDictionary& filenames = params.dictionaries().get("filename").strings();
+
             if (filenames.empty())
             {
                 RENDERER_LOG_ERROR(
-                    "while reading geometry for object \"%s\": missing at least one parameter "
-                    "in \"filename\" parameter group.",
+                    "while reading geometry for object \"%s\": no pose defined "
+                    "(the \"filename\" parameter group is empty).",
                     base_object_name);
+
+                return false;
             }
-            else
+
+            if (!is_pow2(filenames.size()))
             {
-                objects =
-                    read_key_framed_mesh_object(
-                        search_paths,
-                        filenames,
-                        base_object_name,
-                        completed_params);
+                RENDERER_LOG_ERROR(
+                    "while reading geometry for object \"%s\": the number of poses must be a power of two, "
+                    "but " FMT_SIZE_T " poses were defined.",
+                    base_object_name,
+                    filenames.size());
+
+                return false;
             }
+
+            // Multi-pose (motion-blurred) object.
+            if (!read_key_framed_mesh_object(
+                    search_paths,
+                    filenames,
+                    base_object_name,
+                    completed_params,
+                    objects))
+                return false;
         }
         else
         {
@@ -635,10 +663,12 @@ MeshObjectArray MeshObjectReader::read(
                 "while reading geometry for object \"%s\": no \"filename\" parameter or "
                 "\"filename\" parameter group found.",
                 base_object_name);
+
+            return false;
         }
     }
 
-    return objects;
+    return true;
 }
 
 }   // namespace renderer

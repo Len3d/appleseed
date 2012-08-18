@@ -67,6 +67,11 @@ SearchPaths::~SearchPaths()
     delete impl;
 }
 
+void SearchPaths::clear()
+{
+    impl->m_paths.clear();
+}
+
 void SearchPaths::push_back(const char* path)
 {
     assert(path);
@@ -117,6 +122,16 @@ char* SearchPaths::qualify(const char* filepath) const
     }
 
     return duplicate_string(result.c_str());
+}
+
+SearchPaths::ConstIterator SearchPaths::begin() const
+{
+    return impl->m_paths.begin();
+}
+
+SearchPaths::ConstIterator SearchPaths::end() const
+{
+    return impl->m_paths.end();
 }
 
 }   // namespace foundation

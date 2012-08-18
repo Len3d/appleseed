@@ -360,7 +360,7 @@ namespace
 
                     // Compute the assembly space bounding box of the region.
                     const GAABB3 region_bbox =
-                        transform.transform_to_parent(region->compute_local_bbox());
+                        transform.to_parent(region->compute_local_bbox());
 
                     // Insert the region into the root leaf.
                     root_leaf->insert(
@@ -407,9 +407,11 @@ namespace
 //
 
 RegionTree::Arguments::Arguments(
+    const Scene&    scene,
     const UniqueID  assembly_uid,
     const Assembly& assembly)
-  : m_assembly_uid(assembly_uid)
+  : m_scene(scene)
+  , m_assembly_uid(assembly_uid)
   , m_assembly(assembly)
 {
 }
@@ -440,6 +442,7 @@ RegionTree::RegionTree(const Arguments& arguments)
         auto_ptr<ILazyFactory<TriangleTree> > triangle_tree_factory(
             new TriangleTreeFactory(
                 TriangleTree::Arguments(
+                    arguments.m_scene,
                     triangle_tree_uid,
                     interm_leaf->m_extent,
                     interm_leaf->m_assembly,

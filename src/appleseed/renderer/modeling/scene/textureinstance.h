@@ -30,11 +30,21 @@
 #define APPLESEED_RENDERER_MODELING_SCENE_TEXTUREINSTANCE_H
 
 // appleseed.renderer headers.
-#include "renderer/global/global.h"
 #include "renderer/modeling/entity/entity.h"
+#include "renderer/modeling/scene/containers.h"
+
+// appleseed.foundation headers.
+#include "foundation/platform/compiler.h"
+#include "foundation/utility/autoreleaseptr.h"
+
+// appleseed.main headers.
+#include "main/dllsymbol.h"
 
 // Forward declarations.
 namespace foundation    { class DictionaryArray; }
+namespace foundation    { class LightingConditions; }
+namespace renderer      { class ParamArray; }
+namespace renderer      { class Texture; }
 
 namespace renderer
 {
@@ -43,14 +53,12 @@ namespace renderer
 // Texture mapping modes.
 //
 
-// Texture addressing modes.
 enum TextureAddressingMode
 {
     TextureAddressingClamp = 0,
     TextureAddressingWrap
 };
 
-// Texture filtering modes.
 enum TextureFilteringMode
 {
     TextureFilteringNearest = 0,
@@ -67,22 +75,28 @@ enum TextureFilteringMode
 // todo: allow to specify the lighting conditions of a texture.
 //
 
-class RENDERERDLL TextureInstance
+class DLLSYMBOL TextureInstance
   : public Entity
 {
   public:
     // Delete this instance.
-    virtual void release();
+    virtual void release() override;
 
-    // Return the index the instantiated texture in the parent scene or assembly.
-    size_t get_texture_index() const;
+    // Return the name of the instantiated texture in the parent scene or assembly.
+    const char* get_texture_name() const;
 
     // Return the texture mapping modes.
     TextureAddressingMode get_addressing_mode() const;
     TextureFilteringMode get_filtering_mode() const;
 
-    // Retrieve the multiplier value.
-    float get_multiplier() const;
+    // Return the lighting conditions of the texture.
+    const foundation::LightingConditions& get_lighting_conditions() const;
+
+    // Perform entity binding.
+    void bind_entities(const TextureContainer& textures);
+
+    // Return the instantiated texture.
+    Texture* get_texture() const;
 
   private:
     friend class TextureInstanceFactory;
@@ -90,11 +104,15 @@ class RENDERERDLL TextureInstance
     struct Impl;
     Impl* impl;
 
+    TextureAddressingMode           m_addressing_mode;
+    TextureFilteringMode            m_filtering_mode;
+    Texture*                        m_texture;
+
     // Constructor.
     TextureInstance(
-        const char*         name,
-        const ParamArray&   params,
-        const size_t        texture_index);
+        const char*                 name,
+        const ParamArray&           params,
+        const char*                 texture_name);
 
     // Destructor.
     ~TextureInstance();
@@ -105,7 +123,7 @@ class RENDERERDLL TextureInstance
 // Texture instance factory.
 //
 
-class RENDERERDLL TextureInstanceFactory
+class DLLSYMBOL TextureInstanceFactory
 {
   public:
     // Return a set of widget definitions for this texture instance entity model.
@@ -113,10 +131,30 @@ class RENDERERDLL TextureInstanceFactory
 
     // Create a new texture instance.
     static foundation::auto_release_ptr<TextureInstance> create(
-        const char*         name,
-        const ParamArray&   params,
-        const size_t        texture_index);
+        const char*                 name,
+        const ParamArray&           params,
+        const char*                 texture_name);
 };
+
+
+//
+// TextureInstance class implementation.
+//
+
+inline TextureAddressingMode TextureInstance::get_addressing_mode() const
+{
+    return m_addressing_mode;
+}
+
+inline TextureFilteringMode TextureInstance::get_filtering_mode() const
+{
+    return m_filtering_mode;
+}
+
+inline Texture* TextureInstance::get_texture() const
+{
+    return m_texture;
+}
 
 }       // namespace renderer
 

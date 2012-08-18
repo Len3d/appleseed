@@ -42,6 +42,7 @@
 #include "foundation/image/tile.h"
 #include "foundation/platform/types.h"
 #include "foundation/utility/memory.h"
+#include "foundation/utility/statistics.h"
 #include "foundation/utility/string.h"
 
 // Standard headers.
@@ -127,14 +128,12 @@ TextureStore::TextureStore(
 {
 }
 
-TextureStore::~TextureStore()
+StatisticsVector TextureStore::get_statistics() const
 {
-    RENDERER_LOG_DEBUG(
-        "texture store statistics:\n"
-        "  cache            %s\n"
-        "  peak size        %s\n",
-        format_cache_stats(m_tile_cache).c_str(),
-        pretty_size(m_tile_swapper.m_max_memory_size).c_str());
+    Statistics stats = make_single_stage_cache_stats(m_tile_cache);
+    stats.insert_size("peak size", m_tile_swapper.m_max_memory_size);
+
+    return StatisticsVector::make("texture store statistics", stats);
 }
 
 TextureStore::TileSwapper::TileSwapper(
@@ -157,9 +156,7 @@ void TextureStore::TileSwapper::load(const TileKey& key, TileRecord& record)
             : m_scene.assemblies().get_by_uid(key.m_assembly_uid)->textures();
 
     // Fetch the texture.
-    const size_t texture_index = key.get_texture_index();
-    assert(texture_index < textures.size());
-    Texture* texture = textures.get_by_index(texture_index);
+    Texture* texture = textures.get_by_uid(key.m_texture_uid);
 
 #ifdef TRACK_TILE_LOADING
     RENDERER_LOG_DEBUG(
@@ -233,9 +230,7 @@ bool TextureStore::TileSwapper::unload(const TileKey& key, TileRecord& record)
             : m_scene.assemblies().get_by_uid(key.m_assembly_uid)->textures();
 
     // Fetch the texture.
-    const size_t texture_index = key.get_texture_index();
-    assert(texture_index < textures.size());
-    Texture* texture = textures.get_by_index(texture_index);
+    Texture* texture = textures.get_by_uid(key.m_texture_uid);
 
 #ifdef TRACK_TILE_UNLOADING
     RENDERER_LOG_DEBUG(

@@ -30,7 +30,6 @@
 #define APPLESEED_RENDERER_KERNEL_LIGHTING_TRACER_H
 
 // appleseed.renderer headers.
-#include "renderer/global/globaltypes.h"
 #include "renderer/kernel/shading/shadingpoint.h"
 
 // appleseed.foundation headers.
@@ -41,8 +40,9 @@
 #include <cstddef>
 
 // Forward declarations.
-namespace renderer      { class Intersector; }
-namespace renderer      { class TextureCache; }
+namespace renderer  { class Intersector; }
+namespace renderer  { class Scene; }
+namespace renderer  { class TextureCache; }
 
 namespace renderer
 {
@@ -51,10 +51,12 @@ class Tracer
   : public foundation::NonCopyable
 {
   public:
-    // Constructor.
+    // Constructors.
     Tracer(
+        const Scene&                    scene,
         const Intersector&              intersector,
         TextureCache&                   texture_cache,
+        const float                     transparency_threshold = 0.001f,
         const size_t                    max_iterations = 10000);
 
     // Compute the transmission in a given direction. Returns the intersection
@@ -62,11 +64,19 @@ class Tracer
     // to (but excluding) this occluder, or a miss if there is no fully opaque
     // occluder in this direction.
     const ShadingPoint& trace(
-        SamplingContext&                sampling_context,
         const foundation::Vector3d&     origin,
         const foundation::Vector3d&     direction,
         const double                    time,
         double&                         transmission,
+        const ShadingPoint*             parent_shading_point = 0);
+
+    // Compute the transmission in a given direction. This variant may take
+    // advantage of the fact that the intersection with the closest occluder
+    // is not required to deliver higher performances.
+    double trace(
+        const foundation::Vector3d&     origin,
+        const foundation::Vector3d&     direction,
+        const double                    time,
         const ShadingPoint*             parent_shading_point = 0);
 
     // Compute the transmission between two points. Returns the intersection
@@ -74,34 +84,29 @@ class Tracer
     // to (but excluding) this occluder, or a miss if there is no fully opaque
     // occluder in the segment [origin, target).
     const ShadingPoint& trace_between(
-        SamplingContext&                sampling_context,
         const foundation::Vector3d&     origin,
         const foundation::Vector3d&     target,
         const double                    time,
         double&                         transmission,
         const ShadingPoint*             parent_shading_point = 0);
 
+    // Compute the transmission between two points. This variant may take
+    // advantage of the fact that the intersection with the closest occluder
+    // is not required to deliver higher performances.
+    double trace_between(
+        const foundation::Vector3d&     origin,
+        const foundation::Vector3d&     target,
+        const double                    time,
+        const ShadingPoint*             parent_shading_point = 0);
+
   private:
     const Intersector&                  m_intersector;
     TextureCache&                       m_texture_cache;
+    const bool                          m_assume_no_alpha_mapping;
+    const double                        m_transmission_threshold;
     const size_t                        m_max_iterations;
     ShadingPoint                        m_shading_points[2];
 };
-
-
-//
-// Implementation.
-//
-
-inline Tracer::Tracer(
-    const Intersector&                  intersector,
-    TextureCache&                       texture_cache,
-    const size_t                        max_iterations)
-  : m_intersector(intersector)
-  , m_texture_cache(texture_cache)
-  , m_max_iterations(max_iterations)
-{
-}
 
 }       // namespace renderer
 

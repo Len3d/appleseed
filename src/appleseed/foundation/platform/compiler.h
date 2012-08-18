@@ -108,23 +108,43 @@ class FOUNDATIONDLL Compiler
 
 //
 // A qualifier to specify the alignment of a variable, a structure member or a structure.
+// Named FOUNDATION_ALIGN instead of simply ALIGN to prevent a collision with the ALIGN
+// macro defined in /usr/include/i386/param.h on Mac OS X (and possibly other platforms).
 //
 
 // Visual C++.
 #if defined _MSC_VER
-    #define ALIGN(n) __declspec(align(n))
+    #define FOUNDATION_ALIGN(n) __declspec(align(n))
 
 // gcc.
 #elif defined __GNUC__
-    #define ALIGN(n) __attribute__((aligned(n)))
+    #define FOUNDATION_ALIGN(n) __attribute__((aligned(n)))
 
 // Other compilers: ignore the qualifier.
 #else
-    #define ALIGN(n)
+    #define FOUNDATION_ALIGN(n)
 #endif
 
 // Specify an alignment compatible with SSE.
-#define SSE_ALIGN ALIGN(16)
+#define SSE_ALIGN FOUNDATION_ALIGN(16)
+
+
+//
+// Return the alignment requirement of a type.
+//
+
+// Visual C++.
+#if defined _MSC_VER
+    #define ALIGNOF(t) __alignof(t)
+
+// gcc.
+#elif defined __GNUC__
+    #define ALIGNOF(t) __alignof__(t)
+
+// Other compilers: abort compilation.
+#else
+    #error ALIGNOF is not defined for this compiler.
+#endif
 
 
 //
@@ -150,7 +170,7 @@ class FOUNDATIONDLL Compiler
         #define override
     #endif
 
-// Other compilers don't support the 'override' keyword.
+// Other compilers: ignore the 'override' keyword.
 #else
     #define override
 #endif

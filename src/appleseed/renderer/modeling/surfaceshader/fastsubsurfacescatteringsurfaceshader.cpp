@@ -114,14 +114,18 @@ namespace
             return Model;
         }
 
-        virtual void on_frame_begin(
+        virtual bool on_frame_begin(
             const Project&          project,
             const Assembly&         assembly) override
         {
-            SurfaceShader::on_frame_begin(project, assembly);
+            if (!SurfaceShader::on_frame_begin(project, assembly))
+                return false;
 
             const Scene& scene = *project.get_scene();
+
             m_light_sampler.reset(new LightSampler(scene));
+
+            return true;
         }
 
         virtual void evaluate(
@@ -130,17 +134,27 @@ namespace
             const ShadingPoint&     shading_point,
             ShadingResult&          shading_result) const override
         {
-            // Evaluate the inputs.
+            // Initialize the shading result to opaque black.
+            shading_result.m_color_space = ColorSpaceSpectral;
+            shading_result.m_color.set(0.0f);
+            shading_result.m_alpha.set(1.0f);
+
+            // Return black if there is no light in the scene.
+            if (!m_light_sampler->has_lights_or_emitting_triangles())
+                return;
+
+            // Evaluate the shader inputs.
             InputValues values;
             m_inputs.evaluate(
                 shading_context.get_texture_cache(),
                 shading_point.get_uv(0),
                 &values);
-            
-            // Retrieve intersection point and shading normal.
+
+            // Retrieve the intersection point, the shading normal and the camera direction.
             const Vector3d& point = shading_point.get_point();
             const Vector3d& shading_normal = shading_point.get_shading_normal();
             const Vector3d inv_shading_normal = -shading_normal;
+            const Vector3d camera_vec = normalize(-shading_point.get_ray().m_dir);                                          // toward camera
 
             // todo: there are possible correlation artifacts since the sampling_context
             // object is forked twice from there: once to compute the average occluder
@@ -162,24 +176,16 @@ namespace
             const double K = 2.99573227;                                                                                    // -ln(0.05)
             const double sss_contrib = exp(-(avg_distance / values.m_scale) * K);
 
-            // Initialize the shading result to opaque black.
-            shading_result.m_color_space = ColorSpaceSpectral;
-            shading_result.m_color.set(0.0f);
-            shading_result.m_alpha.set(1.0f);
+            sampling_context.split_in_place(3, m_light_samples);
 
-            // Sample the light sources.
-            LightSampleVector light_samples;
-            m_light_sampler->sample(sampling_context, m_light_samples, light_samples);
-
-            const Vector3d camera_vec = normalize(-shading_point.get_ray().m_dir);                                          // toward camera
-
-            for (const_each<LightSampleVector> i = light_samples; i; ++i)
+            for (size_t i = 0; i < m_light_samples; ++i)
             {
-                // Fetch the light sample.
-                const LightSample& light_sample = *i;
-                const Vector3d light_vec = normalize(light_sample.m_point - point);                                         // toward light
+                // Sample the light sources.
+                LightSample light_sample;
+                m_light_sampler->sample(sampling_context.next_vector2<3>(), light_sample);
 
                 // Compute the contribution of this light sample.
+                const Vector3d light_vec = normalize(light_sample.m_point - point);                                         // toward light
                 const Vector3d distorted_light_vec = normalize(light_vec + values.m_distortion * inv_shading_normal);       // normalize() not strictly necessary
                 const double dot_nl = saturate(dot(shading_normal, light_vec));                                             // dot(N, L): diffuse lighting
                 const double dot_vl = saturate(dot(camera_vec, -distorted_light_vec));                                      // dot(V, -L): view-dependent SSS
@@ -212,8 +218,8 @@ namespace
             }
 
             // Normalize the result.
-            if (light_samples.size() > 1)
-                shading_result.m_color /= static_cast<float>(light_samples.size());
+            if (m_light_samples > 1)
+                shading_result.m_color /= static_cast<float>(m_light_samples);
         }
 
       private:

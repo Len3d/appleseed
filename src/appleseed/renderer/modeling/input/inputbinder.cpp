@@ -75,16 +75,12 @@ void InputBinder::bind(const Scene& scene)
 {
     // Build the symbol table of the scene.
     SymbolTable scene_symbols;
-    build_scene_symbol_table(
-        scene,
-        scene_symbols);
+    build_scene_symbol_table(scene, scene_symbols);
 
     // Bind all inputs of all entities in the scene.
-    bind_scene_entities_inputs(
-        scene,
-        scene_symbols);
+    bind_scene_entities_inputs(scene, scene_symbols);
 
-    // Bind inputs of all entities in assemblies.
+    // Bind all inputs of all entities in all assemblies.
     for (const_each<AssemblyContainer> i = scene.assemblies(); i; ++i)
     {
         // Retrieve the assembly.
@@ -179,6 +175,10 @@ void InputBinder::bind_scene_entities_inputs(
     const Scene&                    scene,
     const SymbolTable&              scene_symbols)
 {
+    // Bind textures to texture instances.
+    for (each<TextureInstanceContainer> i = scene.texture_instances(); i; ++i)
+        i->bind_entities(scene.textures());
+
     // Bind environment EDFs inputs.
     for (each<EnvironmentEDFContainer> i = scene.environment_edfs(); i; ++i)
     {
@@ -220,6 +220,10 @@ void InputBinder::bind_assembly_entities_inputs(
     const Assembly&                 assembly,
     const SymbolTable&              assembly_symbols)
 {
+    // Bind textures to texture instances.
+    for (each<TextureInstanceContainer> i = assembly.texture_instances(); i; ++i)
+        i->bind_entities(assembly.textures());
+
     // Bind BSDFs inputs.
     for (each<BSDFContainer> i = assembly.bsdfs(); i; ++i)
     {
@@ -311,38 +315,52 @@ void InputBinder::bind_scene_entity_inputs(
     for (each<InputArray> i = entity_inputs; i; ++i)
     {
         InputArray::iterator& input = *i;
-
-        // Retrieve the value assigned to this input in the parameter array.
         string param_value;
-        try
+
+        if (entity_params.strings().exist(input.name()))
         {
+            // A value is assigned to this input, retrieve it.
             param_value = entity_params.get<string>(input.name());
         }
-        catch (const ExceptionDictionaryItemNotFound&)
+        else if (input.default_value())
         {
-            // Couldn't find an assignment to this input.
-            if (!input.is_optional())
-            {
-                RENDERER_LOG_ERROR(
-                    "while defining %s \"%s\": required parameter \"%s\" missing.",
-                    entity_type,
-                    entity_name,
-                    input.name());
-                ++m_error_count;
-            }
+            // A default value is assigned to this input, use it.
+            param_value = input.default_value();
+            if (param_value.empty())
+                continue;
+        }
+        else
+        {
+            // No value or default value, this is an error.
+            RENDERER_LOG_ERROR(
+                "while defining %s \"%s\": required parameter \"%s\" missing.",
+                entity_type,
+                entity_name,
+                input.name());
+            ++m_error_count;
             continue;
         }
 
-        if (!try_bind_scalar_to_input(param_value, input))
-        {
-            bind_scene_entity_to_input(
+        if (try_bind_scene_entity_to_input(
                 scene,
                 scene_symbols,
                 entity_type,
                 entity_name,
                 param_value.c_str(),
-                input);
-        }
+                input))
+            continue;
+
+        if (try_bind_scalar_to_input(param_value, input))
+            continue;
+
+        RENDERER_LOG_ERROR(
+            "while defining %s \"%s\": cannot bind \"%s\" to parameter \"%s\".",
+            entity_type,
+            entity_name,
+            param_value.c_str(),
+            input.name());
+
+        ++m_error_count;
     }
 }
 
@@ -359,31 +377,33 @@ void InputBinder::bind_assembly_entity_inputs(
     for (each<InputArray> i = entity_inputs; i; ++i)
     {
         InputArray::iterator& input = *i;
-
-        // Retrieve the value assigned to this input in the parameter array.
         string param_value;
-        try
+
+        if (entity_params.strings().exist(input.name()))
         {
+            // A value is assigned to this input, retrieve it.
             param_value = entity_params.get<string>(input.name());
         }
-        catch (const ExceptionDictionaryItemNotFound&)
+        else if (input.default_value())
         {
-            // Couldn't find an assignment to this input.
-            if (!input.is_optional())
-            {
-                RENDERER_LOG_ERROR(
-                    "while defining %s \"%s\": required parameter \"%s\" missing.",
-                    entity_type,
-                    entity_name,
-                    input.name());
-                ++m_error_count;
-            }
+            // A default value is assigned to this input, use it.
+            param_value = input.default_value();
+            if (param_value.empty())
+                continue;
+        }
+        else
+        {
+            // No value or default value, this is an error.
+            RENDERER_LOG_ERROR(
+                "while defining %s \"%s\": required parameter \"%s\" missing.",
+                entity_type,
+                entity_name,
+                input.name());
+            ++m_error_count;
             continue;
         }
 
-        if (!try_bind_scalar_to_input(param_value, input))
-        {
-            bind_assembly_entity_to_input(
+        if (try_bind_assembly_entity_to_input(
                 scene,
                 scene_symbols,
                 assembly,
@@ -391,12 +411,33 @@ void InputBinder::bind_assembly_entity_inputs(
                 entity_type,
                 entity_name,
                 param_value.c_str(),
-                input);
-        }
+                input))
+            continue;
+
+        if (try_bind_scene_entity_to_input(
+                scene,
+                scene_symbols,
+                entity_type,
+                entity_name,
+                param_value.c_str(),
+                input))
+            continue;
+
+        if (try_bind_scalar_to_input(param_value, input))
+            continue;
+
+        RENDERER_LOG_ERROR(
+            "while defining %s \"%s\": cannot bind \"%s\" to parameter \"%s\".",
+            entity_type,
+            entity_name,
+            param_value.c_str(),
+            input.name());
+
+        ++m_error_count;
     }
 }
 
-void InputBinder::bind_scene_entity_to_input(
+bool InputBinder::try_bind_scene_entity_to_input(
     const Scene&                    scene,
     const SymbolTable&              scene_symbols,
     const char*                     entity_type,
@@ -411,32 +452,24 @@ void InputBinder::bind_scene_entity_to_input(
             scene.colors(),
             param_value,
             input);
-        break;
+        return true;
 
       case SymbolTable::SymbolTextureInstance:
         bind_texture_instance_to_input(
-            scene.textures(),
             scene.texture_instances(),
             ~0,                     // the parent is the scene, not an assembly
             entity_type,
             entity_name,
             param_value,
             input);
-        break;
+        return true;
 
       default:
-        RENDERER_LOG_ERROR(
-            "while defining %s \"%s\": cannot bind \"%s\" to parameter \"%s\".",
-            entity_type,
-            entity_name,
-            param_value,
-            input.name());
-        ++m_error_count;
-        break;
+        return false;
     }
 }
 
-void InputBinder::bind_assembly_entity_to_input(
+bool InputBinder::try_bind_assembly_entity_to_input(
     const Scene&                    scene,
     const SymbolTable&              scene_symbols,
     const Assembly&                 assembly,
@@ -453,40 +486,20 @@ void InputBinder::bind_assembly_entity_to_input(
             assembly.colors(),
             param_value,
             input);
-        break;
+        return true;
 
       case SymbolTable::SymbolTextureInstance:
         bind_texture_instance_to_input(
-            assembly.textures(),
             assembly.texture_instances(),
             assembly.get_uid(),
             entity_type,
             entity_name,
             param_value,
             input);
-        break;
-
-      case SymbolTable::SymbolNotFound:
-        // No entity with this name was found in this scope.
-        // Attempt to bind the input to a scene entity.
-        bind_scene_entity_to_input(
-            scene,
-            scene_symbols,
-            entity_type,
-            entity_name,
-            param_value,
-            input);
-        break;
+        return true;
 
       default:
-        RENDERER_LOG_ERROR(
-            "while defining %s \"%s\": cannot bind \"%s\" to parameter \"%s\".",
-            entity_type,
-            entity_name,
-            param_value,
-            input.name());
-        ++m_error_count;
-        break;
+        return false;
     }
 }
 
@@ -518,7 +531,6 @@ void InputBinder::bind_color_to_input(
 }
 
 void InputBinder::bind_texture_instance_to_input(
-    const TextureContainer&         textures,
     const TextureInstanceContainer& texture_instances,
     const UniqueID                  assembly_uid,
     const char*                     entity_type,
@@ -529,10 +541,8 @@ void InputBinder::bind_texture_instance_to_input(
     const TextureInstance* texture_instance = texture_instances.get_by_name(param_value);
     assert(texture_instance);
 
-    const size_t texture_index = texture_instance->get_texture_index();
-    assert(texture_index != ~0);
-
-    Texture* texture = textures.get_by_index(texture_index);
+    // Textures must have been bound to texture instances already.
+    Texture* texture = texture_instance->get_texture();
     assert(texture);
 
     try

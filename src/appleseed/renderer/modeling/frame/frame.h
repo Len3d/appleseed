@@ -30,18 +30,29 @@
 #define APPLESEED_RENDERER_MODELING_FRAME_FRAME_H
 
 // appleseed.renderer headers.
-#include "renderer/global/global.h"
 #include "renderer/modeling/entity/entity.h"
 
 // appleseed.foundation headers.
 #include "foundation/image/canvasproperties.h"
+#include "foundation/image/colorspace.h"
+#include "foundation/math/vector.h"
+#include "foundation/platform/compiler.h"
+#include "foundation/utility/autoreleaseptr.h"
+
+// appleseed.main headers.
+#include "main/dllsymbol.h"
+
+// Standard headers.
+#include <cassert>
+#include <cstddef>
 
 // Forward declarations.
 namespace foundation    { class Image; }
 namespace foundation    { class ImageAttributes; }
 namespace foundation    { class LightingConditions; }
 namespace foundation    { class Tile; }
-namespace renderer      { class AOVImageCollection; }
+namespace renderer      { class ImageStack; }
+namespace renderer      { class ParamArray; }
 
 namespace renderer
 {
@@ -52,18 +63,18 @@ namespace renderer
 // Pixels in a frame are always expressed in the linear RGB color space.
 //
 
-class RENDERERDLL Frame
+class DLLSYMBOL Frame
   : public Entity
 {
   public:
     // Delete this instance.
-    virtual void release();
+    virtual void release() override;
 
     // Access the main underlying image.
     foundation::Image& image() const;
 
     // Access the AOV images.
-    AOVImageCollection& aov_images() const;
+    ImageStack& aov_images() const;
 
     // Return the normalized device coordinates of a given sample.
     foundation::Vector2d get_sample_position(
@@ -81,6 +92,9 @@ class RENDERERDLL Frame
         const size_t    pixel_y,                // y coordinate of the pixel in the tile
         const double    sample_x,               // x coordinate of the sample in the pixel, in [0,1)
         const double    sample_y) const;        // y coordinate of the sample in the pixel, in [0,1)
+
+    // Return the color space the frame should be converted to for display.
+    foundation::ColorSpace get_color_space() const;
 
     // Return the lighting conditions for spectral to RGB conversion.
     const foundation::LightingConditions& get_lighting_conditions() const;
@@ -107,9 +121,8 @@ class RENDERERDLL Frame
     struct Impl;
     Impl* impl;
 
-    // Derogate to the private implementation rule: for performance reasons, we want
-    // get_sample_position() to be inline, but it needs the canvas properties.
-    foundation::CanvasProperties m_props;
+    foundation::CanvasProperties    m_props;
+    foundation::ColorSpace          m_color_space;
 
     // Constructor.
     Frame(
@@ -120,10 +133,6 @@ class RENDERERDLL Frame
     ~Frame();
 
     void extract_parameters();
-
-    // Transform a linear RGB color to the color space of the frame.
-    foundation::Color4f linear_rgb_to_frame(
-        const foundation::Color4f&          linear_rgb) const;
 
     // Write an image to disk after transformation to the frame's color space.
     // Return true if successful, false otherwise.
@@ -138,7 +147,7 @@ class RENDERERDLL Frame
 // FrameFactory class implementation.
 //
 
-class RENDERERDLL FrameFactory
+class DLLSYMBOL FrameFactory
 {
   public:
     // Create a new frame.
@@ -151,6 +160,11 @@ class RENDERERDLL FrameFactory
 //
 // Frame class implementation.
 //
+
+inline foundation::ColorSpace Frame::get_color_space() const
+{
+    return m_color_space;
+}
 
 inline foundation::Vector2d Frame::get_sample_position(
     const double    sample_x,

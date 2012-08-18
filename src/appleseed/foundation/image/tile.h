@@ -98,6 +98,9 @@ class FOUNDATIONDLL Tile
     // Destructor.
     ~Tile();
 
+    // Like foundation::IUnknown::release() but without introducing a virtual function table.
+    void release();
+
     // Tile properties.
     PixelFormat get_pixel_format() const;
     size_t get_width() const;
@@ -392,8 +395,6 @@ inline void Tile::get_pixel(
     const size_t    y,
     T               components[]) const
 {
-    FOUNDATION_CHECK_PIXEL_SIZE(color);
-
     const uint8* src = pixel(x, y);
 
     Pixel::convert_from_format(

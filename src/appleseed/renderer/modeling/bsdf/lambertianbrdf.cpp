@@ -69,10 +69,11 @@ namespace
         LambertianBRDFImpl(
             const char*         name,
             const ParamArray&   params)
-          : BSDF(name, params)
+          : BSDF(name, Reflective, params)
           , m_uniform_reflectance(false)
         {
             m_inputs.declare("reflectance", InputFormatSpectrum);
+            m_inputs.declare("reflectance_multiplier", InputFormatScalar, "1.0");
         }
 
         virtual void release() override
@@ -85,26 +86,30 @@ namespace
             return Model;
         }
 
-        virtual void on_frame_begin(
+        virtual bool on_frame_begin(
             const Project&      project,
             const Assembly&     assembly) override
         {
-            BSDF::on_frame_begin(project, assembly);
+            if (!BSDF::on_frame_begin(project, assembly))
+                return false;
 
-            if (m_inputs.source("reflectance")->is_uniform())
+            if (m_inputs.source("reflectance")->is_uniform() &&
+                m_inputs.source("reflectance_multiplier")->is_uniform())
             {
                 m_uniform_reflectance = true;
 
-                UniformInputEvaluator uniform_input_evaluator;
-                const InputValues* uniform_values =
-                    static_cast<const InputValues*>(uniform_input_evaluator.evaluate(m_inputs));
+                UniformInputEvaluator input_evaluator;
+                const InputValues* values =
+                    static_cast<const InputValues*>(input_evaluator.evaluate(m_inputs));
 
-                m_brdf_value = uniform_values->m_reflectance;
-                m_brdf_value *= static_cast<float>(RcpPi);
+                m_brdf_value = values->m_reflectance;
+                m_brdf_value *= static_cast<float>(values->m_reflectance_multiplier * RcpPi);
             }
+
+            return true;
         }
 
-        FORCE_INLINE virtual void sample(
+        FORCE_INLINE virtual Mode sample(
             SamplingContext&    sampling_context,
             const void*         data,
             const bool          adjoint,
@@ -114,8 +119,7 @@ namespace
             const Vector3d&     outgoing,
             Vector3d&           incoming,
             Spectrum&           value,
-            double&             probability,
-            Mode&               mode) const
+            double&             probability) const
         {
             // Compute the incoming direction in local space.
             sampling_context.split_in_place(2, 1);
@@ -128,26 +132,24 @@ namespace
             // No reflection in or below the geometric surface.
             const double cos_ig = dot(incoming, geometric_normal);
             if (cos_ig <= 0.0)
-            {
-                mode = None;
-                return;
-            }
+                return Absorption;
 
             // Compute the BRDF value.
             if (m_uniform_reflectance)
                 value = m_brdf_value;
             else
             {
-                value = static_cast<const InputValues*>(data)->m_reflectance;
-                value *= static_cast<float>(RcpPi);
+                const InputValues* values = static_cast<const InputValues*>(data);
+                value = values->m_reflectance;
+                value *= static_cast<float>(values->m_reflectance_multiplier * RcpPi);
             }
 
             // Compute the probability density of the sampled direction.
             probability = wi.y * RcpPi;
             assert(probability > 0.0);
 
-            // Set the scattering mode.
-            mode = Diffuse;
+            // Return the scattering mode.
+            return Diffuse;
         }
 
         FORCE_INLINE virtual double evaluate(
@@ -158,8 +160,12 @@ namespace
             const Basis3d&      shading_basis,
             const Vector3d&     outgoing,
             const Vector3d&     incoming,
+            const int           modes,
             Spectrum&           value) const
         {
+            if (!(modes & Diffuse))
+                return 0.0;
+
             const Vector3d& n = shading_basis.get_normal();
             const double cos_in = dot(incoming, n);
 
@@ -168,8 +174,9 @@ namespace
                 value = m_brdf_value;
             else
             {
-                value = static_cast<const InputValues*>(data)->m_reflectance;
-                value *= static_cast<float>(RcpPi);
+                const InputValues* values = static_cast<const InputValues*>(data);
+                value = values->m_reflectance;
+                value *= static_cast<float>(values->m_reflectance_multiplier * RcpPi);
             }
 
             // Return the probability density of the sampled direction.
@@ -181,22 +188,28 @@ namespace
             const Vector3d&     geometric_normal,
             const Basis3d&      shading_basis,
             const Vector3d&     outgoing,
-            const Vector3d&     incoming) const
+            const Vector3d&     incoming,
+            const int           modes) const
         {
+            if (!(modes & Diffuse))
+                return 0.0;
+
             const Vector3d& n = shading_basis.get_normal();
             const double cos_in = dot(incoming, n);
+
             return cos_in * RcpPi;
         }
 
       private:
         struct InputValues
         {
-            Spectrum    m_reflectance;          // diffuse reflectance (albedo, technically)
-            Alpha       m_reflectance_alpha;    // alpha channel of diffuse reflectance
+            Spectrum    m_reflectance;              // diffuse reflectance (albedo, technically)
+            Alpha       m_reflectance_alpha;        // unused
+            double      m_reflectance_multiplier;
         };
 
         bool            m_uniform_reflectance;
-        Spectrum        m_brdf_value;           // precomputed value of the BRDF (albedo/Pi)
+        Spectrum        m_brdf_value;               // precomputed value of the BRDF (albedo/Pi)
     };
 
     typedef BRDFWrapper<LambertianBRDFImpl> LambertianBRDF;
@@ -232,6 +245,16 @@ DictionaryArray LambertianBRDFFactory::get_widget_definitions() const
                     .insert("texture_instance", "Textures"))
             .insert("use", "required")
             .insert("default", ""));
+
+    definitions.push_back(
+        Dictionary()
+            .insert("name", "reflectance_multiplier")
+            .insert("label", "Reflectance Multiplier")
+            .insert("widget", "entity_picker")
+            .insert("entity_types",
+                Dictionary().insert("texture_instance", "Textures"))
+            .insert("use", "optional")
+            .insert("default", "1.0"));
 
     return definitions;
 }

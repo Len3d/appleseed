@@ -134,25 +134,25 @@ namespace
         {
         }
 
-        virtual void resetErrors()
+        virtual void resetErrors() override
         {
             m_event_counters.clear();
         }
 
-        virtual void warning(const SAXParseException& e)
+        virtual void warning(const SAXParseException& e) override
         {
             ErrorLogger::warning(e);
             m_event_counters.signal_warning();
         }
 
-        virtual void error(const SAXParseException& e)
+        virtual void error(const SAXParseException& e) override
         {
             ErrorLogger::error(e);
             m_event_counters.signal_error();
             throw e;    // terminate parsing
         }
 
-        virtual void fatalError(const SAXParseException& e)
+        virtual void fatalError(const SAXParseException& e) override
         {
             ErrorLogger::fatalError(e);
             m_event_counters.signal_error();
@@ -366,6 +366,7 @@ namespace
         ElementValues
     };
 
+    typedef IElementHandler<ProjectElementID> ElementHandlerType;
     typedef ElementHandlerBase<ProjectElementID> ElementHandlerBase;
 
 
@@ -382,7 +383,7 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             // We need to fully qualify the call to get_value().
             m_name = ElementHandlerBase::get_value(attrs, "name");
@@ -414,16 +415,14 @@ namespace
       : public ElementHandlerBase
     {
       public:
-        typedef IElementHandler<ProjectElementID> ElementHandlerType;
-
-        virtual void start_element(const Attributes& attrs);
+        virtual void start_element(const Attributes& attrs) override;
 
         virtual void end_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler);
+            ElementHandlerType*         handler) override;
 
       protected:
-        ParamArray  m_params;
+        ParamArray m_params;
     };
 
 
@@ -440,7 +439,7 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             ParametrizedElementHandler::start_element(attrs);
             m_name = get_value(attrs, "name");
@@ -504,56 +503,6 @@ namespace
 
 
     //
-    // Handle an entity element.
-    //
-
-    template <typename Entity, typename EntityFactoryRegistrar>
-    class EntityElementHandler
-      : public ParametrizedElementHandler
-    {
-      public:
-        EntityElementHandler(const string& entity_type, ParseContext& context)
-          : m_context(context)
-          , m_entity_type(entity_type)
-        {
-        }
-
-        virtual void start_element(const Attributes& attrs)
-        {
-            ParametrizedElementHandler::start_element(attrs);
-            m_entity.reset();
-            m_name = get_value(attrs, "name");
-            m_model = get_value(attrs, "model");
-        }
-
-        virtual void end_element()
-        {
-            m_entity =
-                create_entity<Entity>(
-                    m_registrar,
-                    m_entity_type,
-                    m_model,
-                    m_name,
-                    m_params,
-                    m_context);
-        }
-
-        auto_release_ptr<Entity> get_entity()
-        {
-            return m_entity;
-        }
-
-      protected:
-        ParseContext&                   m_context;
-        const EntityFactoryRegistrar    m_registrar;
-        const string                    m_entity_type;
-        auto_release_ptr<Entity>        m_entity;
-        string                          m_name;
-        string                          m_model;
-    };
-
-
-    //
     // <look_at> element handler.
     //
 
@@ -566,7 +515,7 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             m_matrix = Matrix4d::identity();
 
@@ -619,13 +568,13 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             m_matrix = Matrix4d::identity();
             clear_keep_memory(m_values);
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {
             if (m_values.size() == 16)
             {
@@ -643,7 +592,7 @@ namespace
 
         virtual void characters(
             const XMLCh* const  chars,
-            const XMLSize_t     length)
+            const XMLSize_t     length) override
         {
             get_vector(transcode(chars), m_values, m_context);
         }
@@ -673,7 +622,7 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             m_matrix = Matrix4d::identity();
 
@@ -715,7 +664,7 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             const Vector3d value = get_vector3(get_value(attrs, "value"), m_context);
             m_matrix = Matrix4d::scaling(value);
@@ -745,7 +694,7 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             const Vector3d value = get_vector3(get_value(attrs, "value"), m_context);
             m_matrix = Matrix4d::translation(value);
@@ -775,13 +724,13 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             m_time = get_scalar(get_value(attrs, "time", "0.0"), m_context);
             m_matrix = Matrix4d::identity();
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {
             try
             {
@@ -797,7 +746,7 @@ namespace
 
         virtual void end_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             switch (element)
             {
@@ -864,6 +813,68 @@ namespace
 
 
     //
+    // Handle a transformation sequence.
+    //
+
+    template <typename Base>
+    class TransformSequenceElementHandler
+      : public Base
+    {
+      public:
+        virtual void start_element(const Attributes& attrs) override
+        {
+            Base::start_element(attrs);
+        }
+
+        virtual void end_element() override
+        {
+            if (m_transforms.empty())
+                m_transforms[0.0] = Transformd(Matrix4d::identity());
+        }
+
+        virtual void end_child_element(
+            const ProjectElementID      element,
+            ElementHandlerType*         handler) override
+        {
+            switch (element)
+            {
+              case ElementTransform:
+                {
+                    TransformElementHandler* transform_handler =
+                        static_cast<TransformElementHandler*>(handler);
+                    m_transforms[transform_handler->get_time()] = transform_handler->get_transform();
+                }
+                break;
+
+              default:
+                Base::end_child_element(element, handler);
+                break;
+            }
+        }
+
+        void copy_transform_sequence_to(TransformSequence& target) const
+        {
+            target.clear();
+
+            for (const_each<TransformMap> i = m_transforms; i; ++i)
+                target.set_transform(i->first, i->second);
+        }
+
+        Transformd get_earliest_transform() const
+        {
+            TransformSequence sequence;
+            copy_transform_sequence_to(sequence);
+            return sequence.earliest_transform();
+        }
+
+      private:
+        typedef map<double, Transformd> TransformMap;
+
+        TransformMap m_transforms;
+    };
+
+
+    //
     // <values> element handler.
     //
 
@@ -876,14 +887,14 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             m_values.clear();
         }
 
         virtual void characters(
             const XMLCh* const  chars,
-            const XMLSize_t     length)
+            const XMLSize_t     length) override
         {
             get_vector(transcode(chars), m_values, m_context);
         }
@@ -912,17 +923,20 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             ParametrizedElementHandler::start_element(attrs);
+
             m_color_entity.reset();
             m_name = get_value(attrs, "name");
             m_values.clear();
             m_alpha.clear();
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {
+            ParametrizedElementHandler::end_element();
+
             try
             {
                 m_color_entity =
@@ -949,7 +963,7 @@ namespace
 
         virtual void end_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             switch (element)
             {
@@ -982,6 +996,59 @@ namespace
 
 
     //
+    // Handle an element defining an entity.
+    //
+
+    template <typename Entity, typename EntityFactoryRegistrar, typename Base>
+    class EntityElementHandler
+      : public Base
+    {
+      public:
+        EntityElementHandler(const string& entity_type, ParseContext& context)
+          : m_context(context)
+          , m_entity_type(entity_type)
+        {
+        }
+
+        virtual void start_element(const Attributes& attrs) override
+        {
+            Base::start_element(attrs);
+
+            m_entity.reset();
+            m_name = Base::get_value(attrs, "name");
+            m_model = Base::get_value(attrs, "model");
+        }
+
+        virtual void end_element() override
+        {
+            Base::end_element();
+
+            m_entity =
+                create_entity<Entity>(
+                    m_registrar,
+                    m_entity_type,
+                    m_model,
+                    m_name,
+                    Base::m_params,
+                    m_context);
+        }
+
+        auto_release_ptr<Entity> get_entity()
+        {
+            return m_entity;
+        }
+
+      protected:
+        ParseContext&                   m_context;
+        const EntityFactoryRegistrar    m_registrar;
+        const string                    m_entity_type;
+        auto_release_ptr<Entity>        m_entity;
+        string                          m_name;
+        string                          m_model;
+    };
+
+
+    //
     // <texture> element handler.
     //
 
@@ -994,16 +1061,19 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             ParametrizedElementHandler::start_element(attrs);
+
             m_texture.reset();
             m_name = get_value(attrs, "name");
             m_model = get_value(attrs, "model");
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {
+            ParametrizedElementHandler::end_element();
+
             try
             {
                 const TextureFactoryRegistrar::FactoryType* factory =
@@ -1069,20 +1139,23 @@ namespace
             m_textures = textures;
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             ParametrizedElementHandler::start_element(attrs);
+
             m_texture_instance.reset();
             m_name = get_value(attrs, "name");
             m_texture = get_value(attrs, "texture");
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {
-            assert(m_textures);
-            const size_t texture_index = m_textures->get_index(m_texture.c_str());
+            ParametrizedElementHandler::end_element();
 
-            if (texture_index != ~0)
+            assert(m_textures);
+            const Texture* texture = m_textures->get_by_name(m_texture.c_str());
+
+            if (texture)
             {
                 try
                 {
@@ -1090,7 +1163,7 @@ namespace
                         TextureInstanceFactory::create(
                             m_name.c_str(),
                             m_params,
-                            texture_index);
+                            texture->get_name());
                 }
                 catch (const ExceptionDictionaryItemNotFound& e)
                 {
@@ -1130,11 +1203,17 @@ namespace
     //
 
     class BSDFElementHandler
-      : public EntityElementHandler<BSDF, BSDFFactoryRegistrar>
+      : public EntityElementHandler<
+                   BSDF,
+                   BSDFFactoryRegistrar,
+                   ParametrizedElementHandler>
     {
       public:
         explicit BSDFElementHandler(ParseContext& context)
-          : EntityElementHandler<BSDF, BSDFFactoryRegistrar>("bsdf", context)
+          : EntityElementHandler<
+                BSDF,
+                BSDFFactoryRegistrar,
+                ParametrizedElementHandler>("bsdf", context)
         {
         }
     };
@@ -1145,11 +1224,17 @@ namespace
     //
 
     class EDFElementHandler
-      : public EntityElementHandler<EDF, EDFFactoryRegistrar>
+      : public EntityElementHandler<
+                   EDF,
+                   EDFFactoryRegistrar,
+                   ParametrizedElementHandler>
     {
       public:
         explicit EDFElementHandler(ParseContext& context)
-          : EntityElementHandler<EDF, EDFFactoryRegistrar>("edf", context)
+          : EntityElementHandler<
+                EDF,
+                EDFFactoryRegistrar,
+                ParametrizedElementHandler>("edf", context)
         {
         }
     };
@@ -1160,11 +1245,17 @@ namespace
     //
 
     class SurfaceShaderElementHandler
-      : public EntityElementHandler<SurfaceShader, SurfaceShaderFactoryRegistrar>
+      : public EntityElementHandler<
+                   SurfaceShader,
+                   SurfaceShaderFactoryRegistrar,
+                   ParametrizedElementHandler>
     {
       public:
         explicit SurfaceShaderElementHandler(ParseContext& context)
-          : EntityElementHandler<SurfaceShader, SurfaceShaderFactoryRegistrar>("surface shader", context)
+          : EntityElementHandler<
+                SurfaceShader,
+                SurfaceShaderFactoryRegistrar,
+                ParametrizedElementHandler>("surface shader", context)
         {
         }
     };
@@ -1183,16 +1274,19 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             ParametrizedElementHandler::start_element(attrs);
+
             m_environment.reset();
             m_name = get_value(attrs, "name");
             m_model = get_value(attrs, "model");
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {
+            ParametrizedElementHandler::end_element();
+
             if (m_model == EnvironmentFactory::get_model())
                 m_environment = EnvironmentFactory::create(m_name.c_str(), m_params);
             else
@@ -1223,11 +1317,17 @@ namespace
     //
 
     class EnvironmentEDFElementHandler
-      : public EntityElementHandler<EnvironmentEDF, EnvironmentEDFFactoryRegistrar>
+      : public EntityElementHandler<
+                   EnvironmentEDF,
+                   EnvironmentEDFFactoryRegistrar,
+                   ParametrizedElementHandler>
     {
       public:
         explicit EnvironmentEDFElementHandler(ParseContext& context)
-          : EntityElementHandler<EnvironmentEDF, EnvironmentEDFFactoryRegistrar>("environment edf", context)
+          : EntityElementHandler<
+                EnvironmentEDF,
+                EnvironmentEDFFactoryRegistrar,
+                ParametrizedElementHandler>("environment edf", context)
         {
         }
     };
@@ -1238,11 +1338,17 @@ namespace
     //
 
     class EnvironmentShaderElementHandler
-      : public EntityElementHandler<EnvironmentShader, EnvironmentShaderFactoryRegistrar>
+      : public EntityElementHandler<
+                   EnvironmentShader,
+                   EnvironmentShaderFactoryRegistrar,
+                   ParametrizedElementHandler>
     {
       public:
         explicit EnvironmentShaderElementHandler(ParseContext& context)
-          : EntityElementHandler<EnvironmentShader, EnvironmentShaderFactoryRegistrar>("environment shader", context)
+          : EntityElementHandler<
+                EnvironmentShader,
+                EnvironmentShaderFactoryRegistrar,
+                ParametrizedElementHandler>("environment shader", context)
         {
         }
     };
@@ -1253,50 +1359,30 @@ namespace
     //
 
     class LightElementHandler
-      : public EntityElementHandler<Light, LightFactoryRegistrar>
+      : public EntityElementHandler<
+                   Light,
+                   LightFactoryRegistrar,
+                   TransformSequenceElementHandler<ParametrizedElementHandler> >
     {
       public:
-        typedef EntityElementHandler<Light, LightFactoryRegistrar> Base;
-
         explicit LightElementHandler(ParseContext& context)
           : Base("light", context)
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
-        {
-            Base::start_element(attrs);
-            m_transform = Transformd(Matrix4d::identity());
-        }
-
-        virtual void end_element()
+        virtual void end_element() override
         {
             Base::end_element();
-            m_entity->set_transform(m_transform);
-        }
 
-        virtual void end_child_element(
-            const ProjectElementID      element,
-            ElementHandlerType*         handler)
-        {
-            switch (element)
-            {
-              case ElementTransform:
-                {
-                    TransformElementHandler* transform_handler =
-                        static_cast<TransformElementHandler*>(handler);
-                    m_transform = transform_handler->get_transform();
-                }
-                break;
-
-              default:
-                Base::end_child_element(element, handler);
-                break;
-            }
+            Base::m_entity->set_transform(Base::get_earliest_transform());
         }
 
       private:
-        Transformd m_transform;
+        typedef EntityElementHandler<
+            Light,
+            LightFactoryRegistrar,
+            TransformSequenceElementHandler<ParametrizedElementHandler>
+        > Base;
     };
 
 
@@ -1313,16 +1399,19 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             ParametrizedElementHandler::start_element(attrs);
+
             m_material.reset();
             m_name = get_value(attrs, "name");
             m_model = get_value(attrs, "model");
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {    
+            ParametrizedElementHandler::end_element();
+
             if (m_model == MaterialFactory::get_model())
                 m_material = MaterialFactory::create(m_name.c_str(), m_params);
             else
@@ -1353,56 +1442,30 @@ namespace
     //
 
     class CameraElementHandler
-      : public EntityElementHandler<Camera, CameraFactoryRegistrar>
+      : public EntityElementHandler<
+                   Camera,
+                   CameraFactoryRegistrar,
+                   TransformSequenceElementHandler<ParametrizedElementHandler> >
     {
       public:
-        typedef EntityElementHandler<Camera, CameraFactoryRegistrar> Base;
-
         explicit CameraElementHandler(ParseContext& context)
           : Base("camera", context)
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
-        {
-            Base::start_element(attrs);
-
-            m_transforms[0.0] = Transformd(Matrix4d::identity());
-        }
-
-        virtual void end_element()
+        virtual void end_element() override
         {
             Base::end_element();
 
-            m_entity->transform_sequence().clear();
-
-            for (const_each<TransformMap> i = m_transforms; i; ++i)
-                m_entity->transform_sequence().set_transform(i->first, i->second);
-        }
-
-        virtual void end_child_element(
-            const ProjectElementID      element,
-            ElementHandlerType*         handler)
-        {
-            switch (element)
-            {
-              case ElementTransform:
-                {
-                    TransformElementHandler* transform_handler =
-                        static_cast<TransformElementHandler*>(handler);
-                    m_transforms[transform_handler->get_time()] = transform_handler->get_transform();
-                }
-                break;
-
-              default:
-                Base::end_child_element(element, handler);
-                break;
-            }
+            copy_transform_sequence_to(m_entity->transform_sequence());
         }
 
       private:
-        typedef map<double, Transformd> TransformMap;
-        TransformMap m_transforms;
+        typedef EntityElementHandler<
+            Camera,
+            CameraFactoryRegistrar,
+            TransformSequenceElementHandler<ParametrizedElementHandler>
+        > Base;
     };
 
 
@@ -1421,27 +1484,32 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             ParametrizedElementHandler::start_element(attrs);
+
             clear_keep_memory(m_objects);
             m_name = get_value(attrs, "name");
             m_model = get_value(attrs, "model");
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {
+            ParametrizedElementHandler::end_element();
+
             try
             {
                 if (m_model == MeshObjectFactory::get_model())
                 {
-                    MeshObjectArray object_array =
-                        MeshObjectReader::read(
+                    MeshObjectArray object_array;
+
+                    if (MeshObjectReader::read(
                             m_context.get_project().get_search_paths(),
                             m_name.c_str(),
-                            m_params);
-
-                    m_objects = array_vector<ObjectVector>(object_array);
+                            m_params,
+                            object_array))
+                        m_objects = array_vector<ObjectVector>(object_array);
+                    else m_context.get_event_counters().signal_error();
                 }
                 else
                 {
@@ -1488,7 +1556,7 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             const string slot_string = get_value(attrs, "slot");
             try
@@ -1549,7 +1617,7 @@ namespace
     //
 
     class ObjectInstanceElementHandler
-      : public ParametrizedElementHandler
+      : public TransformSequenceElementHandler<ParametrizedElementHandler>
     {
       public:
         explicit ObjectInstanceElementHandler(ParseContext& context)
@@ -1567,21 +1635,22 @@ namespace
             m_materials = materials;
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
-            ParametrizedElementHandler::start_element(attrs);
+            Base::start_element(attrs);
+
             m_object_instance.reset();
-            m_transform = Transformd(Matrix4d::identity());
             m_front_material_names.clear();
             m_back_material_names.clear();
             m_name = get_value(attrs, "name");
             m_object = get_value(attrs, "object");
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {
-            assert(m_objects);
+            Base::end_element();
 
+            assert(m_objects);
             Object* object = m_objects->get_by_name(m_object.c_str());
 
             if (object)
@@ -1591,7 +1660,7 @@ namespace
                         m_name.c_str(),
                         m_params,
                         *object,
-                        m_transform,
+                        Base::get_earliest_transform(),
                         m_front_material_names,
                         m_back_material_names);
             }
@@ -1607,7 +1676,7 @@ namespace
 
         virtual void end_child_element(
             const ProjectElementID          element,
-            ElementHandlerType*             handler)
+            ElementHandlerType*             handler) override
         {
             switch (element)
             {
@@ -1644,16 +1713,8 @@ namespace
                 }
                 break;
 
-              case ElementTransform:
-                {
-                    TransformElementHandler* transform_handler =
-                        static_cast<TransformElementHandler*>(handler);
-                    m_transform = transform_handler->get_transform();
-                }
-                break;
-
               default:
-                ParametrizedElementHandler::end_child_element(element, handler);
+                Base::end_child_element(element, handler);
                 break;
             }
         }
@@ -1664,15 +1725,83 @@ namespace
         }
 
       private:
+        typedef TransformSequenceElementHandler<ParametrizedElementHandler> Base;
+
         ParseContext&                       m_context;
         const ObjectContainer*              m_objects;
         const MaterialContainer*            m_materials;
         auto_release_ptr<ObjectInstance>    m_object_instance;
         string                              m_name;
         string                              m_object;
-        Transformd                          m_transform;
         StringArray                         m_front_material_names;
         StringArray                         m_back_material_names;
+    };
+
+
+    //
+    // <assembly_instance> element handler.
+    //
+
+    class AssemblyInstanceElementHandler
+      : public TransformSequenceElementHandler<ParametrizedElementHandler>
+    {
+      public:
+        explicit AssemblyInstanceElementHandler(ParseContext& context)
+          : m_context(context)
+          , m_assemblies(0)
+        {
+        }
+
+        void set_assembly_container(const AssemblyContainer* assemblies)
+        {
+            m_assemblies = assemblies;
+        }
+
+        virtual void start_element(const Attributes& attrs) override
+        {
+            Base::start_element(attrs);
+
+            m_assembly_instance.reset();
+            m_name = get_value(attrs, "name");
+            m_assembly = get_value(attrs, "assembly");
+        }
+
+        virtual void end_element() override
+        {
+            Base::end_element();
+
+            assert(m_assemblies);
+            const Assembly* assembly = m_assemblies->get_by_name(m_assembly.c_str());
+
+            if (assembly)
+            {
+                m_assembly_instance =
+                    AssemblyInstanceFactory::create(m_name.c_str(), m_params, *assembly);
+                copy_transform_sequence_to(m_assembly_instance->transform_sequence());
+            }
+            else
+            {
+                RENDERER_LOG_ERROR(
+                    "while defining assembly instance \"%s\": the assembly \"%s\" does not exist",
+                    m_name.c_str(),
+                    m_assembly.c_str());
+                m_context.get_event_counters().signal_error();
+            }
+        }
+
+        auto_release_ptr<AssemblyInstance> get_assembly_instance()
+        {
+            return m_assembly_instance;
+        }
+
+      private:
+        typedef TransformSequenceElementHandler<ParametrizedElementHandler> Base;
+
+        ParseContext&                       m_context;
+        const AssemblyContainer*            m_assemblies;
+        auto_release_ptr<AssemblyInstance>  m_assembly_instance;
+        string                              m_name;
+        string                              m_assembly;
     };
 
 
@@ -1689,11 +1818,16 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             ParametrizedElementHandler::start_element(attrs);
+
             m_assembly.reset();
+
             m_name = get_value(attrs, "name");
+
+            m_assemblies.clear();
+            m_assembly_instances.clear();
             m_bsdfs.clear();
             m_colors.clear();
             m_edfs.clear();
@@ -1706,9 +1840,14 @@ namespace
             m_texture_instances.clear();
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {
+            ParametrizedElementHandler::end_element();
+
             m_assembly = AssemblyFactory::create(m_name.c_str(), m_params);
+
+            m_assembly->assemblies().swap(m_assemblies);
+            m_assembly->assembly_instances().swap(m_assembly_instances);
             m_assembly->bsdfs().swap(m_bsdfs);
             m_assembly->colors().swap(m_colors);
             m_assembly->edfs().swap(m_edfs);
@@ -1723,10 +1862,21 @@ namespace
 
         virtual void start_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             switch (element)
             {
+              case ElementAssembly:
+                break;
+
+              case ElementAssemblyInstance:
+                {
+                    AssemblyInstanceElementHandler* asm_inst_handler =
+                        static_cast<AssemblyInstanceElementHandler*>(handler);
+                    asm_inst_handler->set_assembly_container(&m_assemblies);
+                }
+                break;
+
               case ElementBSDF:
                 break;
 
@@ -1775,10 +1925,30 @@ namespace
 
         virtual void end_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             switch (element)
             {
+              case ElementAssembly:
+                {
+                    AssemblyElementHandler* assembly_handler =
+                        static_cast<AssemblyElementHandler*>(handler);
+                    auto_release_ptr<Assembly> assembly = assembly_handler->get_assembly();
+                    if (assembly.get())
+                        m_assemblies.insert(assembly);
+                }
+                break;
+
+              case ElementAssemblyInstance:
+                {
+                    AssemblyInstanceElementHandler* asm_inst_handler =
+                        static_cast<AssemblyInstanceElementHandler*>(handler);
+                    auto_release_ptr<AssemblyInstance> instance = asm_inst_handler->get_assembly_instance();
+                    if (instance.get())
+                        m_assembly_instances.insert(instance);
+                }
+                break;
+
               case ElementBSDF:
                 {
                     BSDFElementHandler* bsdf_handler =
@@ -1793,8 +1963,7 @@ namespace
                 {
                     ColorElementHandler* color_handler =
                         static_cast<ColorElementHandler*>(handler);
-                    auto_release_ptr<ColorEntity> color_entity =
-                        color_handler->get_color_entity();
+                    auto_release_ptr<ColorEntity> color_entity = color_handler->get_color_entity();
                     if (color_entity.get())
                         m_colors.insert(color_entity);
                 }
@@ -1854,8 +2023,7 @@ namespace
                 {
                     SurfaceShaderElementHandler* surface_shader_handler =
                         static_cast<SurfaceShaderElementHandler*>(handler);
-                    auto_release_ptr<SurfaceShader> surface_shader =
-                        surface_shader_handler->get_entity();
+                    auto_release_ptr<SurfaceShader> surface_shader = surface_shader_handler->get_entity();
                     if (surface_shader.get())
                         m_surface_shaders.insert(surface_shader);
                 }
@@ -1896,6 +2064,8 @@ namespace
         ParseContext&               m_context;
         auto_release_ptr<Assembly>  m_assembly;
         string                      m_name;
+        AssemblyContainer           m_assemblies;
+        AssemblyInstanceContainer   m_assembly_instances;
         BSDFContainer               m_bsdfs;
         ColorContainer              m_colors;
         EDFContainer                m_edfs;
@@ -1906,93 +2076,6 @@ namespace
         SurfaceShaderContainer      m_surface_shaders;
         TextureContainer            m_textures;
         TextureInstanceContainer    m_texture_instances;
-    };
-
-
-    //
-    // <assembly_instance> element handler.
-    //
-
-    class AssemblyInstanceElementHandler
-      : public ParametrizedElementHandler
-    {
-      public:
-        explicit AssemblyInstanceElementHandler(ParseContext& context)
-          : m_context(context)
-          , m_assemblies(0)
-        {
-        }
-
-        void set_assembly_container(const AssemblyContainer* assemblies)
-        {
-            m_assemblies = assemblies;
-        }
-
-        virtual void start_element(const Attributes& attrs)
-        {
-            ParametrizedElementHandler::start_element(attrs);
-            m_assembly_instance.reset();
-            m_name = get_value(attrs, "name");
-            m_assembly = get_value(attrs, "assembly");
-            m_transform = Transformd(Matrix4d::identity());
-        }
-
-        virtual void end_element()
-        {
-            assert(m_assemblies);
-            const Assembly* assembly = m_assemblies->get_by_name(m_assembly.c_str());
-
-            if (assembly)
-            {
-                m_assembly_instance =
-                    AssemblyInstanceFactory::create(
-                        m_name.c_str(),
-                        m_params,
-                        *assembly,
-                        m_transform);
-            }
-            else
-            {
-                RENDERER_LOG_ERROR(
-                    "while defining assembly instance \"%s\": the assembly \"%s\" does not exist",
-                    m_name.c_str(),
-                    m_assembly.c_str());
-                m_context.get_event_counters().signal_error();
-            }
-        }
-
-        virtual void end_child_element(
-            const ProjectElementID      element,
-            ElementHandlerType*         handler)
-        {
-            switch (element)
-            {
-              case ElementTransform:
-                {
-                    TransformElementHandler* transform_handler =
-                        static_cast<TransformElementHandler*>(handler);
-                    m_transform = transform_handler->get_transform();
-                }
-                break;
-
-              default:
-                ParametrizedElementHandler::end_child_element(element, handler);
-                break;
-            }
-        }
-
-        auto_release_ptr<AssemblyInstance> get_assembly_instance()
-        {
-            return m_assembly_instance;
-        }
-
-      private:
-        ParseContext&                       m_context;
-        const AssemblyContainer*            m_assemblies;
-        auto_release_ptr<AssemblyInstance>  m_assembly_instance;
-        string                              m_name;
-        string                              m_assembly;
-        Transformd                          m_transform;
     };
 
 
@@ -2009,12 +2092,12 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             m_scene = SceneFactory::create();
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {
             // Compute the bounding box of the scene.
             const GAABB3 bbox =
@@ -2037,7 +2120,7 @@ namespace
 
         virtual void start_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             assert(m_scene.get());
 
@@ -2086,7 +2169,7 @@ namespace
 
         virtual void end_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             assert(m_scene.get());
 
@@ -2228,15 +2311,18 @@ namespace
         {
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             ParametrizedElementHandler::start_element(attrs);
+
             m_frame.reset();
             m_name = get_value(attrs, "name");
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {    
+            ParametrizedElementHandler::end_element();
+
             m_frame = FrameFactory::create(m_name.c_str(), m_params);
         }
 
@@ -2273,7 +2359,7 @@ namespace
 
         virtual void end_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             assert(m_project);
 
@@ -2316,17 +2402,18 @@ namespace
             m_project = project;
         }
 
-        virtual void start_element(const Attributes& attrs)
+        virtual void start_element(const Attributes& attrs) override
         {
             ParametrizedElementHandler::start_element(attrs);
+
             m_configuration.reset();
             m_name = get_value(attrs, "name");
             m_base_name = get_value(attrs, "base");
         }
 
-        virtual void end_element()
+        virtual void end_element() override
         {    
-            assert(m_project);
+            ParametrizedElementHandler::end_element();
 
             m_configuration =
                 ConfigurationFactory::create(
@@ -2336,6 +2423,7 @@ namespace
             // Handle configuration inheritance.
             if (!m_base_name.empty())
             {
+                assert(m_project);
                 const Configuration* base =
                     m_project->configurations().get_by_name(m_base_name.c_str());
 
@@ -2389,7 +2477,7 @@ namespace
 
         virtual void start_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             assert(m_project);
 
@@ -2409,7 +2497,7 @@ namespace
 
         virtual void end_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             assert(m_project);
 
@@ -2451,7 +2539,7 @@ namespace
 
         virtual void start_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             assert(m_project);
 
@@ -2482,7 +2570,7 @@ namespace
 
         virtual void end_child_element(
             const ProjectElementID      element,
-            ElementHandlerType*         handler)
+            ElementHandlerType*         handler) override
         {
             assert(m_project);
 
@@ -2581,7 +2669,7 @@ namespace
             {
             }
 
-            virtual auto_ptr<ElementHandlerType> create()
+            virtual auto_ptr<ElementHandlerType> create() override
             {
                 return auto_ptr<ElementHandlerType>(
                     new ProjectElementHandler(m_context, m_project));
@@ -2599,7 +2687,7 @@ namespace
             {
             }
 
-            virtual auto_ptr<ElementHandlerType> create()
+            virtual auto_ptr<ElementHandlerType> create() override
             {
                 return auto_ptr<ElementHandlerType>(new ElementHandler(m_context));
             }

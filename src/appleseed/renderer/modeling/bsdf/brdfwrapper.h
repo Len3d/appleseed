@@ -48,13 +48,11 @@ class BRDFWrapper
   : public BRDFImpl
 {
   public:
-    typedef typename BRDFImpl::Mode Mode;
-
     BRDFWrapper(
         const char*                     name,
         const ParamArray&               params);
 
-    virtual void sample(
+    virtual typename BRDFImpl::Mode sample(
         SamplingContext&                sampling_context,
         const void*                     data,
         const bool                      adjoint,
@@ -64,8 +62,7 @@ class BRDFWrapper
         const foundation::Vector3d&     outgoing,
         foundation::Vector3d&           incoming,
         Spectrum&                       value,
-        double&                         probability,
-        Mode&                           mode) const override;
+        double&                         probability) const override;
 
     virtual double evaluate(
         const void*                     data,
@@ -75,6 +72,7 @@ class BRDFWrapper
         const foundation::Basis3d&      shading_basis,
         const foundation::Vector3d&     outgoing,
         const foundation::Vector3d&     incoming,
+        const int                       modes,
         Spectrum&                       value) const override;
 
     virtual double evaluate_pdf(
@@ -82,7 +80,8 @@ class BRDFWrapper
         const foundation::Vector3d&     geometric_normal,
         const foundation::Basis3d&      shading_basis,
         const foundation::Vector3d&     outgoing,
-        const foundation::Vector3d&     incoming) const override;
+        const foundation::Vector3d&     incoming,
+        const int                       modes) const override;
 };
 
 
@@ -99,7 +98,7 @@ BRDFWrapper<BRDFImpl>::BRDFWrapper(
 }
 
 template <typename BRDFImpl>
-void BRDFWrapper<BRDFImpl>::sample(
+typename BRDFImpl::Mode BRDFWrapper<BRDFImpl>::sample(
     SamplingContext&                    sampling_context,
     const void*                         data,
     const bool                          adjoint,
@@ -109,48 +108,49 @@ void BRDFWrapper<BRDFImpl>::sample(
     const foundation::Vector3d&         outgoing,
     foundation::Vector3d&               incoming,
     Spectrum&                           value,
-    double&                             probability,
-    Mode&                               mode) const
+    double&                             probability) const
 {
     assert(foundation::is_normalized(geometric_normal));
     assert(foundation::is_normalized(outgoing));
     assert(foundation::dot(outgoing, geometric_normal) >= 0.0);
 
-    BRDFImpl::sample(
-        sampling_context,
-        data,
-        adjoint,
-        false,
-        geometric_normal,
-        shading_basis,
-        outgoing,
-        incoming,
-        value,
-        probability,
-        mode);
+    const typename BRDFImpl::Mode mode =
+        BRDFImpl::sample(
+            sampling_context,
+            data,
+            adjoint,
+            false,
+            geometric_normal,
+            shading_basis,
+            outgoing,
+            incoming,
+            value,
+            probability);
 
-    if (mode == BRDFImpl::None)
-        return;
-
-    assert(foundation::is_normalized(incoming));
-    assert(foundation::dot(incoming, geometric_normal) >= 0.0);
-    assert(probability == DiracDelta || probability > 0.0);
-
-    if (cosine_mult)
+    if (mode != BRDFImpl::Absorption)
     {
-        if (adjoint)
+        assert(foundation::is_normalized(incoming));
+        assert(foundation::dot(incoming, geometric_normal) >= 0.0);
+        assert(probability == BRDFImpl::DiracDelta || probability > 0.0);
+
+        if (cosine_mult)
         {
-            const double cos_on = std::abs(foundation::dot(outgoing, shading_basis.get_normal()));
-            const double cos_ig = foundation::dot(incoming, geometric_normal);
-            const double cos_og = foundation::dot(outgoing, geometric_normal);
-            value *= static_cast<float>(cos_on * cos_ig / cos_og);
-        }
-        else
-        {
-            const double cos_in = std::abs(foundation::dot(incoming, shading_basis.get_normal()));
-            value *= static_cast<float>(cos_in);
+            if (adjoint)
+            {
+                const double cos_on = std::abs(foundation::dot(outgoing, shading_basis.get_normal()));
+                const double cos_ig = foundation::dot(incoming, geometric_normal);
+                const double cos_og = foundation::dot(outgoing, geometric_normal);
+                value *= static_cast<float>(cos_on * cos_ig / cos_og);
+            }
+            else
+            {
+                const double cos_in = std::abs(foundation::dot(incoming, shading_basis.get_normal()));
+                value *= static_cast<float>(cos_in);
+            }
         }
     }
+
+    return mode;
 }
 
 template <typename BRDFImpl>
@@ -162,6 +162,7 @@ double BRDFWrapper<BRDFImpl>::evaluate(
     const foundation::Basis3d&          shading_basis,
     const foundation::Vector3d&         outgoing,
     const foundation::Vector3d&         incoming,
+    const int                           modes,
     Spectrum&                           value) const
 {
     assert(foundation::is_normalized(geometric_normal));
@@ -184,6 +185,7 @@ double BRDFWrapper<BRDFImpl>::evaluate(
             shading_basis,
             outgoing,
             incoming,
+            modes,
             value);
 
     assert(probability >= 0.0);
@@ -211,7 +213,8 @@ double BRDFWrapper<BRDFImpl>::evaluate_pdf(
     const foundation::Vector3d&         geometric_normal,
     const foundation::Basis3d&          shading_basis,
     const foundation::Vector3d&         outgoing,
-    const foundation::Vector3d&         incoming) const
+    const foundation::Vector3d&         incoming,
+    const int                           modes) const
 {
     assert(foundation::is_normalized(geometric_normal));
     assert(foundation::is_normalized(outgoing));
@@ -230,7 +233,8 @@ double BRDFWrapper<BRDFImpl>::evaluate_pdf(
             geometric_normal,
             shading_basis,
             outgoing,
-            incoming);
+            incoming,
+            modes);
 
     assert(probability >= 0.0);
 

@@ -30,19 +30,19 @@
 #include "constantsurfaceshader.h"
 
 // appleseed.renderer headers.
+#include "renderer/global/globaltypes.h"
 #include "renderer/kernel/shading/shadingcontext.h"
 #include "renderer/kernel/shading/shadingpoint.h"
 #include "renderer/kernel/shading/shadingresult.h"
 #include "renderer/modeling/input/inputarray.h"
 #include "renderer/modeling/input/source.h"
 #include "renderer/modeling/surfaceshader/surfaceshader.h"
+#include "renderer/utility/paramarray.h"
 
 // appleseed.foundation headers.
 #include "foundation/image/colorspace.h"
+#include "foundation/utility/containers/dictionary.h"
 #include "foundation/utility/containers/specializedarrays.h"
-
-// Forward declarations.
-namespace renderer  { class TextureCache; }
 
 using namespace foundation;
 using namespace std;
@@ -68,6 +68,22 @@ namespace
           : SurfaceShader(name, params)
         {
             m_inputs.declare("color", InputFormatSpectrum);
+            m_inputs.declare("color_multiplier", InputFormatScalar, "1.0");
+            m_inputs.declare("alpha_multiplier", InputFormatScalar, "1.0");
+
+            const string alpha_source = m_params.get_optional<string>("alpha_source", "color");
+            if (alpha_source == "color")
+                m_alpha_source = AlphaSourceColor;
+            else if (alpha_source == "material")
+                m_alpha_source = AlphaSourceMaterial;
+            else 
+            {
+                RENDERER_LOG_ERROR(
+                    "invalid value \"%s\" for parameter \"alpha_source\", "
+                    "using default value \"color\".",
+                    alpha_source.c_str());
+                m_alpha_source = AlphaSourceColor;
+            }
         }
 
         virtual void release() override
@@ -86,6 +102,7 @@ namespace
             const ShadingPoint&     shading_point,
             ShadingResult&          shading_result) const override
         {
+            // Evaluate the shader inputs.
             InputValues values;
             m_inputs.evaluate(
                 shading_context.get_texture_cache(),
@@ -94,22 +111,27 @@ namespace
 
             shading_result.m_color_space = ColorSpaceSpectral;
             shading_result.m_color = values.m_color;
-            shading_result.m_alpha = values.m_alpha;
-        }
 
-        virtual void evaluate_alpha_mask(
-            SamplingContext&        sampling_context,
-            TextureCache&           texture_cache,
-            const ShadingPoint&     shading_point,
-            Alpha&                  alpha) const override
-        {
-            InputValues values;
-            m_inputs.evaluate(
-                texture_cache,
-                shading_point.get_uv(0),
-                &values);
+            // Handle alpha mapping.
+            if (m_alpha_source == AlphaSourceColor)
+                shading_result.m_alpha = values.m_alpha;
+            else
+            {
+                const Material* material = shading_point.get_material();
+                if (material && material->get_alpha_map())
+                {
+                    // Evaluate the alpha map at the shading point.
+                    material->get_alpha_map()->evaluate(
+                        shading_context.get_texture_cache(),
+                        shading_point.get_uv(0),
+                        shading_result.m_alpha);
+                }
+                else shading_result.m_alpha = Alpha(1.0f);
+            }
 
-            alpha = values.m_alpha;
+            // Apply multipliers.
+            shading_result.m_color *= static_cast<float>(values.m_color_multiplier);
+            shading_result.m_alpha *= static_cast<float>(values.m_alpha_multiplier);
         }
 
       private:
@@ -117,7 +139,17 @@ namespace
         {
             Spectrum    m_color;
             Alpha       m_alpha;
+            double      m_color_multiplier;
+            double      m_alpha_multiplier;
         };
+
+        enum AlphaSource
+        {
+            AlphaSourceColor,
+            AlphaSourceMaterial
+        };
+
+        AlphaSource     m_alpha_source;
     };
 }
 
@@ -151,6 +183,38 @@ DictionaryArray ConstantSurfaceShaderFactory::get_widget_definitions() const
                     .insert("texture_instance", "Textures"))
             .insert("use", "required")
             .insert("default", ""));
+
+    definitions.push_back(
+        Dictionary()
+            .insert("name", "alpha_source")
+            .insert("label", "Alpha Source")
+            .insert("widget", "dropdown_list")
+            .insert("dropdown_items",
+                Dictionary()
+                    .insert("Alpha channel of the color", "color")
+                    .insert("Alpha map of the material", "material"))
+            .insert("use", "optional")
+            .insert("default", "color"));
+
+    definitions.push_back(
+        Dictionary()
+            .insert("name", "color_multiplier")
+            .insert("label", "Color Multiplier")
+            .insert("widget", "entity_picker")
+            .insert("entity_types",
+                Dictionary().insert("texture_instance", "Textures"))
+            .insert("default", "1.0")
+            .insert("use", "optional"));
+
+    definitions.push_back(
+        Dictionary()
+            .insert("name", "alpha_multiplier")
+            .insert("label", "Alpha Multiplier")
+            .insert("widget", "entity_picker")
+            .insert("entity_types",
+                Dictionary().insert("texture_instance", "Textures"))
+            .insert("default", "1.0")
+            .insert("use", "optional"));
 
     return definitions;
 }

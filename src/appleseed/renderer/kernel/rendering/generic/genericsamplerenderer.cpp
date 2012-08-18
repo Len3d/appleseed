@@ -30,9 +30,13 @@
 #include "genericsamplerenderer.h"
 
 // appleseed.renderer headers.
+#include "renderer/global/globallogger.h"
+#include "renderer/global/globaltypes.h"
+#include "renderer/kernel/aov/spectrumstack.h"
 #include "renderer/kernel/intersection/intersector.h"
 #include "renderer/kernel/intersection/tracecontext.h"
 #include "renderer/kernel/lighting/ilightingengine.h"
+#include "renderer/kernel/lighting/tracer.h"
 #include "renderer/kernel/shading/shadingcontext.h"
 #include "renderer/kernel/shading/shadingengine.h"
 #include "renderer/kernel/shading/shadingpoint.h"
@@ -42,6 +46,20 @@
 #include "renderer/modeling/camera/camera.h"
 #include "renderer/modeling/frame/frame.h"
 #include "renderer/modeling/scene/scene.h"
+
+// appleseed.foundation headers.
+#include "foundation/image/color.h"
+#include "foundation/image/colorspace.h"
+#include "foundation/image/spectrum.h"
+#include "foundation/math/vector.h"
+#include "foundation/platform/types.h"
+#include "foundation/utility/statistics.h"
+#include "foundation/utility/string.h"
+
+// Standard headers.
+#include <cstddef>
+#include <limits>
+#include <string>
 
 using namespace foundation;
 using namespace std;
@@ -56,8 +74,7 @@ namespace
     //
 
     // If defined, the texture cache returns solid tiles whose color depends on whether
-    // the requested tile could be found in the cache or not, and if it was found, at
-    // which level it was found.
+    // the requested tile could be found in the cache or not.
     #undef DEBUG_DISPLAY_TEXTURE_CACHE_PERFORMANCES
 
     class GenericSampleRenderer
@@ -75,41 +92,46 @@ namespace
           : m_params(params)
           , m_scene(scene)
           , m_lighting_conditions(frame.get_lighting_conditions())
+          , m_opacity_threshold(1.0f - m_params.m_transparency_threshold)
           , m_texture_cache(texture_store)
-          , m_intersector(trace_context, m_texture_cache, true, m_params.m_report_self_intersections)
+          , m_intersector(trace_context, m_texture_cache, m_params.m_report_self_intersections)
+          , m_tracer(m_scene, m_intersector, m_texture_cache, m_params.m_transparency_threshold, m_params.m_max_iterations)
           , m_lighting_engine(lighting_engine_factory->create())
+          , m_shading_context(m_intersector, m_tracer, m_texture_cache, m_lighting_engine, m_params.m_transparency_threshold, m_params.m_max_iterations)
           , m_shading_engine(shading_engine)
+          , m_invalid_sample_count(0)
         {
         }
 
         ~GenericSampleRenderer()
         {
+            if (m_invalid_sample_count > 0)
+            {
+                RENDERER_LOG_WARNING(
+                    "found %s pixel sample%s with NaN or negative values",
+                    pretty_uint(m_invalid_sample_count).c_str(),
+                    m_invalid_sample_count > 1 ? "s" : "");
+            }
+
             m_lighting_engine->release();
         }
 
-        virtual void release()
+        virtual void release() override
         {
             delete this;
         }
 
         virtual void render_sample(
             SamplingContext&        sampling_context,
-            const Vector2d&         image_point,        // point in image plane, in NDC
-            ShadingResult&          shading_result)
+            const Vector2d&         image_point,
+            ShadingResult&          shading_result) override
         {
 #ifdef DEBUG_DISPLAY_TEXTURE_CACHE_PERFORMANCES
 
-            const uint64 initial_texcache_s0_hit_count = m_texture_cache.get_stage0_hit_count();
-            const uint64 initial_texcache_s1_hit_count = m_texture_cache.get_stage1_hit_count();
-            const uint64 initial_texcache_s1_miss_count = m_texture_cache.get_stage1_miss_count();
+            const uint64 last_texture_cache_hit_count = m_texture_cache.get_hit_count();
+            const uint64 last_texture_cache_miss_count = m_texture_cache.get_miss_count();
 
 #endif
-
-            // Construct a shading context.
-            ShadingContext shading_context(
-                m_intersector,
-                m_texture_cache,
-                m_lighting_engine);
 
             // Construct a primary ray.
             ShadingRay primary_ray;
@@ -117,9 +139,6 @@ namespace
                 sampling_context,
                 image_point,
                 primary_ray);
-
-            // Initialize the result to linear RGB transparent black.
-            shading_result.clear();
 
             ShadingPoint shading_points[2];
             size_t shading_point_index = 0;
@@ -129,12 +148,11 @@ namespace
             while (true)
             {
                 // Put a hard limit on the number of iterations.
-                const size_t MaxIterations = 10000;
-                if (++iterations >= MaxIterations)
+                if (++iterations >= m_params.m_max_iterations)
                 {
                     RENDERER_LOG_WARNING(
                         "reached hard iteration limit (%s), breaking primary ray trace loop.",
-                        pretty_int(MaxIterations).c_str());
+                        pretty_int(m_params.m_max_iterations).c_str());
                     break;
                 }
 
@@ -149,27 +167,46 @@ namespace
                 shading_point_ptr = &shading_points[shading_point_index];
                 shading_point_index = 1 - shading_point_index;
 
-                // Shade the intersection point.
-                ShadingResult local_result;
-                local_result.m_aovs.set_size(shading_result.m_aovs.size());
-                m_shading_engine.shade(
-                    sampling_context,
-                    shading_context,
-                    *shading_point_ptr,
-                    local_result);
+                if (iterations == 1)
+                {
+                    // Shade the intersection point.
+                    m_shading_engine.shade(
+                        sampling_context,
+                        m_shading_context,
+                        *shading_point_ptr,
+                        shading_result);
 
-                // Transform the result to the linear RGB color space.
-                local_result.transform_to_linear_rgb(m_lighting_conditions);
+                    // Transform the result to the linear RGB color space.
+                    shading_result.transform_to_linear_rgb(m_lighting_conditions);
 
-                // "Over" alpha compositing.
-                shading_result.composite_over(local_result);
+                    // Apply alpha.
+                    if (shading_point_ptr->hit())
+                        shading_result.m_color *= shading_result.m_alpha[0];
+                }
+                else
+                {
+                    // Shade the intersection point.
+                    ShadingResult local_result;
+                    local_result.m_aovs.set_size(shading_result.m_aovs.size());
+                    m_shading_engine.shade(
+                        sampling_context,
+                        m_shading_context,
+                        *shading_point_ptr,
+                        local_result);
+
+                    // Transform the result to the linear RGB color space.
+                    local_result.transform_to_linear_rgb(m_lighting_conditions);
+
+                    // "Over" alpha compositing.
+                    shading_result.composite_over(local_result);
+                }
 
                 // Stop once we hit the environment.
                 if (!shading_point_ptr->hit())
                     break;
 
                 // Stop once we hit full opacity.
-                if (max_value(shading_result.m_alpha) > m_params.m_transparency_threshold)
+                if (max_value(shading_result.m_alpha) > m_opacity_threshold)
                     break;
 
                 // Move the ray origin to the intersection point.
@@ -177,50 +214,55 @@ namespace
                 primary_ray.m_tmax = numeric_limits<double>::max();
             }
 
+            // Detect and report invalid values.
+            report_invalid_values(shading_result);
+
 #ifdef DEBUG_DISPLAY_TEXTURE_CACHE_PERFORMANCES
 
-            const Vector<uint64, 3> texcache_stats(
-                m_texture_cache.get_stage0_hit_count() - initial_texcache_s0_hit_count,
-                m_texture_cache.get_stage1_hit_count() - initial_texcache_s1_hit_count,
-                m_texture_cache.get_stage1_miss_count() - initial_texcache_s1_miss_count);
+            const uint64 delta_hit_count = m_texture_cache.get_hit_count() - last_texture_cache_hit_count;
+            const uint64 delta_miss_count = m_texture_cache.get_miss_count() - last_texture_cache_miss_count;
 
-            if (texcache_stats == Vector<uint64, 3>(0, 0, 0))
+            if (delta_hit_count + delta_miss_count == 0)
             {
                 // In black: no access to the texture cache.
                 shading_result.set_to_linear_rgb(Color3f(0.0f, 0.0f, 0.0f));
             }
             else
             {
-                switch (max_index(texcache_stats))
+                if (delta_hit_count > delta_miss_count)
                 {
-                  // In green: a majority of stage-0 cache hits.
-                  case 0:
+                    // In green: a majority of cache hits.
                     shading_result.set_to_linear_rgb(Color3f(0.0f, 1.0f, 0.0f));
-                    break;
-
-                  // In blue: a majority of stage-0 cache misses and stage-1 cache hits.
-                  case 1:
-                    shading_result.set_to_linear_rgb(Color3f(0.0f, 0.0f, 1.0f));
-                    break;
-
-                  // In red: a majority of stage-0 and stage-1 cache misses.
-                  case 2:
+                }
+                else
+                {
+                    // In red: a majority of cache misses.
                     shading_result.set_to_linear_rgb(Color3f(1.0f, 0.0f, 0.0f));
-                    break;
                 }
             }
 
 #endif
         }
 
+        virtual StatisticsVector get_statistics() const override
+        {
+            StatisticsVector stats;
+            stats.merge(m_texture_cache.get_statistics());
+            stats.merge(m_intersector.get_statistics());
+            stats.merge(m_lighting_engine->get_statistics());
+            return stats;
+        }
+
       private:
         struct Parameters
         {
             const float     m_transparency_threshold;
+            const size_t    m_max_iterations;
             const bool      m_report_self_intersections;
 
             explicit Parameters(const ParamArray& params)
-              : m_transparency_threshold(1.0f - params.get_optional<float>("opacity_threshold", 1.0e-5f))
+              : m_transparency_threshold(params.get_optional<float>("transparency_threshold", 0.001f))
+              , m_max_iterations(params.get_optional<size_t>("max_iterations", 10000))
               , m_report_self_intersections(params.get_optional<bool>("report_self_intersections", false))
             {
             }
@@ -229,11 +271,58 @@ namespace
         const Parameters            m_params;
         const Scene&                m_scene;
         const LightingConditions&   m_lighting_conditions;
+        const float                 m_opacity_threshold;
 
         TextureCache                m_texture_cache;
         Intersector                 m_intersector;
+        Tracer                      m_tracer;
         ILightingEngine*            m_lighting_engine;
+        const ShadingContext        m_shading_context;
         ShadingEngine&              m_shading_engine;
+
+        uint64                      m_invalid_sample_count;
+
+        void report_invalid_values(const ShadingResult& result)
+        {
+            bool warn = false;
+            
+            warn = warn || has_invalid_values(spectrum_as_color3f(result.m_color));
+            warn = warn || has_invalid_values(result.m_alpha);
+
+            const size_t aov_count = result.m_aovs.size();
+
+            for (size_t i = 0; i < aov_count; ++i)
+                warn = warn || has_invalid_values(spectrum_as_color3f(result.m_aovs[i]));
+
+            if (warn)
+            {
+                if (m_invalid_sample_count++ == 0)
+                    RENDERER_LOG_WARNING("found at least one pixel sample with NaN or negative values");
+            }
+        }
+
+        static Color3f spectrum_as_color3f(const Spectrum& s)
+        {
+            return Color3f(s[0], s[1], s[2]);
+        }
+
+        template <typename T, size_t N>
+        static bool has_invalid_values(const Color<T, N>& c)
+        {
+            for (size_t i = 0; i < N; ++i)
+            {
+                if (is_invalid_value(c[i]))
+                    return true;
+            }
+
+            return false;
+        }
+
+        template <typename T>
+        static bool is_invalid_value(const T x)
+        {
+            return x < T(0.0) || x != x;
+        }
     };
 }
 

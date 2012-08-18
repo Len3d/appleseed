@@ -30,10 +30,10 @@
 #include "masterrenderer.h"
 
 // appleseed.renderer headers.
-#include "renderer/kernel/lighting/drt/drt.h"
+#include "renderer/kernel/lighting/drt/drtlightingengine.h"
+#include "renderer/kernel/lighting/pt/ptlightingengine.h"
 #include "renderer/kernel/lighting/ilightingengine.h"
 #include "renderer/kernel/lighting/lightsampler.h"
-#include "renderer/kernel/lighting/pathtracing/pathtracing.h"
 #include "renderer/kernel/rendering/debug/blanktilerenderer.h"
 #include "renderer/kernel/rendering/debug/debugtilerenderer.h"
 #include "renderer/kernel/rendering/debug/ewatesttilerenderer.h"
@@ -155,6 +155,18 @@ void MasterRenderer::do_render() const
     }
 }
 
+namespace
+{
+    void copy_param(
+        ParamArray&         dest,
+        const ParamArray&   source,
+        const char*         param_name)
+    {
+        if (source.strings().exist(param_name))
+            dest.strings().insert(param_name, source.strings().get(param_name));
+    }
+}
+
 IRendererController::Status MasterRenderer::initialize_and_render_frame_sequence() const
 {
     assert(m_project.get_scene());
@@ -208,6 +220,7 @@ IRendererController::Status MasterRenderer::initialize_and_render_frame_sequence
         RENDERER_LOG_ERROR(
             "invalid value for \"lighting_engine\" parameter: \"%s\".",
             lighting_engine_param.c_str());
+
         return IRendererController::AbortRendering;
     }
 
@@ -237,6 +250,7 @@ IRendererController::Status MasterRenderer::initialize_and_render_frame_sequence
         RENDERER_LOG_ERROR(
             "invalid value for \"sample_renderer\" parameter: \"%s\".",
             sample_renderer_param.c_str());
+
         return IRendererController::AbortRendering;
     }
 
@@ -279,6 +293,7 @@ IRendererController::Status MasterRenderer::initialize_and_render_frame_sequence
         RENDERER_LOG_ERROR(
             "invalid value for \"tile_renderer\" parameter: \"%s\".",
             tile_renderer_param.c_str());
+
         return IRendererController::AbortRendering;
     }
 
@@ -314,6 +329,7 @@ IRendererController::Status MasterRenderer::initialize_and_render_frame_sequence
         RENDERER_LOG_ERROR(
             "invalid value for \"sample_generator\" parameter: \"%s\".",
             sample_generator_param.c_str());
+
         return IRendererController::AbortRendering;
     }
 
@@ -328,32 +344,44 @@ IRendererController::Status MasterRenderer::initialize_and_render_frame_sequence
 
     if (frame_renderer_param == "generic")
     {
+        ParamArray params = m_params.child("generic_frame_renderer");
+        copy_param(params, m_params, "rendering_threads");
+
         frame_renderer.reset(
             GenericFrameRendererFactory::create(
                 frame,
                 tile_renderer_factory.get(),
                 m_tile_callback_factory,
-                m_params.child("generic_frame_renderer")));
+                params));
     }
     else if (frame_renderer_param == "progressive")
     {
+        ParamArray params = m_params.child("progressive_frame_renderer");
+        copy_param(params, m_params, "rendering_threads");
+
         frame_renderer.reset(
             ProgressiveFrameRendererFactory::create(
                 m_project,
                 sample_generator_factory.get(),
                 m_tile_callback_factory,
-                m_params.child("progressive_frame_renderer")));
+                params));
     }
     else
     {
         RENDERER_LOG_ERROR(
             "invalid value for \"frame_renderer\" parameter: \"%s\".",
             frame_renderer_param.c_str());
+
         return IRendererController::AbortRendering;
     }
 
     // Execute the main rendering loop.
-    return render_frame_sequence(frame_renderer.get());
+    const IRendererController::Status status = render_frame_sequence(frame_renderer.get());
+
+    // Print texture store performance statistics.
+    RENDERER_LOG_DEBUG("%s", texture_store.get_statistics().to_string().c_str());
+
+    return status;
 }
 
 IRendererController::Status MasterRenderer::render_frame_sequence(IFrameRenderer* frame_renderer) const
@@ -362,55 +390,49 @@ IRendererController::Status MasterRenderer::render_frame_sequence(IFrameRenderer
     {
         assert(!frame_renderer->is_rendering());
 
+        if (!m_project.get_scene()->on_frame_begin(m_project))
+            return IRendererController::AbortRendering;
+
         m_renderer_controller->on_frame_begin();
-        m_project.get_scene()->on_frame_begin(m_project);
+
+        frame_renderer->start_rendering();
 
         const IRendererController::Status status = render_frame(frame_renderer);
-        assert(!frame_renderer->is_rendering());
-
-        m_project.get_scene()->on_frame_end(m_project);
-        m_renderer_controller->on_frame_end();
 
         switch (status)
         {
           case IRendererController::TerminateRendering:
           case IRendererController::AbortRendering:
           case IRendererController::ReinitializeRendering:
-            return status;
+            frame_renderer->terminate_rendering();
+            break;
 
           case IRendererController::RestartRendering:
+            frame_renderer->stop_rendering();
             break;
 
           assert_otherwise;
         }
+
+        assert(!frame_renderer->is_rendering());
+
+        m_project.get_scene()->on_frame_end(m_project);
+
+        m_renderer_controller->on_frame_end();
+
+        if (status != IRendererController::RestartRendering)
+            return status;
     }
 }
 
 IRendererController::Status MasterRenderer::render_frame(IFrameRenderer* frame_renderer) const
 {
-    frame_renderer->start_rendering();
-
     while (frame_renderer->is_rendering())
     {
         const IRendererController::Status status = m_renderer_controller->on_progress();
 
-        switch (status)
-        {
-          case IRendererController::ContinueRendering:
-            break;
-
-          case IRendererController::TerminateRendering:
-          case IRendererController::AbortRendering:
-          case IRendererController::ReinitializeRendering:
-            frame_renderer->terminate_rendering();
+        if (status != IRendererController::ContinueRendering)
             return status;
-
-          case IRendererController::RestartRendering:
-            frame_renderer->stop_rendering();
-            return status;
-
-          assert_otherwise;
-        }
     }
 
     return IRendererController::TerminateRendering;

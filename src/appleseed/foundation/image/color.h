@@ -35,7 +35,7 @@
 
 // Imath headers.
 #ifdef APPLESEED_ENABLE_IMATH_INTEROP
-#include "openexr/ImathColor.h"
+#include "OpenEXR/ImathColor.h"
 #endif
 
 // Standard headers.
@@ -117,6 +117,12 @@ template <typename T, size_t N> Color<T, N> saturate(const Color<T, N>& c);
 // Clamp the argument to [min, max].
 template <typename T, size_t N> Color<T, N> clamp(const Color<T, N>& c, const T min, const T max);
 
+// Clamp the argument to [min, +infinity).
+template <typename T, size_t N> Color<T, N> clamp_low(const Color<T, N>& c, const T min);
+
+// Clamp the argument to (-infinity, max].
+template <typename T, size_t N> Color<T, N> clamp_high(const Color<T, N>& c, const T max);
+
 // Return the smallest or largest signed component of a color.
 template <typename T, size_t N> T min_value(const Color<T, N>& c);
 template <typename T, size_t N> T max_value(const Color<T, N>& c);
@@ -131,6 +137,9 @@ template <typename T, size_t N> size_t max_abs_index(const Color<T, N>& c);
 
 // Return the average value of a color.
 template <typename T, size_t N> T average_value(const Color<T, N>& c);
+
+// Return true if a color contains at least one NaN value.
+template <typename T, size_t N> bool has_nan(const Color<T, N>& c);
 
 
 //
@@ -576,6 +585,28 @@ inline Color<T, N> clamp(const Color<T, N>& c, const T min, const T max)
 }
 
 template <typename T, size_t N>
+inline Color<T, N> clamp_low(const Color<T, N>& c, const T min)
+{
+    Color<T, N> result;
+
+    for (size_t i = 0; i < N; ++i)
+        result[i] = std::max(c[i], min);
+
+    return result;
+}
+
+template <typename T, size_t N>
+inline Color<T, N> clamp_high(const Color<T, N>& c, const T max)
+{
+    Color<T, N> result;
+
+    for (size_t i = 0; i < N; ++i)
+        result[i] = std::min(c[i], max);
+
+    return result;
+}
+
+template <typename T, size_t N>
 inline T min_value(const Color<T, N>& c)
 {
     T value = c[0];
@@ -692,6 +723,18 @@ inline T average_value(const Color<T, N>& c)
         average += c[i];
 
     return average * (T(1.0) / N);
+}
+
+template <typename T, size_t N>
+inline bool has_nan(const Color<T, N>& c)
+{
+    for (size_t i = 0; i < N; ++i)
+    {
+        if (c[i] != c[i])
+            return true;
+    }
+
+    return false;
 }
 
 

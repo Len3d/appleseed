@@ -56,17 +56,12 @@ namespace renderer
 
 struct Scene::Impl
 {
-    UniqueID                                m_uid;
-    VersionID                               m_geometry_version_id;
-    auto_release_ptr<Camera>                m_camera;
-    auto_release_ptr<Environment>           m_environment;
-    ColorContainer                          m_colors;
-    TextureContainer                        m_textures;
-    TextureInstanceContainer                m_texture_instances;
-    EnvironmentEDFContainer                 m_environment_edfs;
-    EnvironmentShaderContainer              m_environment_shaders;
-    AssemblyContainer                       m_assemblies;
-    AssemblyInstanceContainer               m_assembly_instances;
+    UniqueID                        m_uid;
+    VersionID                       m_geometry_version_id;
+    auto_release_ptr<Camera>        m_camera;
+    auto_release_ptr<Environment>   m_environment;
+    EnvironmentEDFContainer         m_environment_edfs;
+    EnvironmentShaderContainer      m_environment_shaders;
 };
 
 Scene::Scene()
@@ -115,21 +110,6 @@ Environment* Scene::get_environment() const
     return impl->m_environment.get();
 }
 
-ColorContainer& Scene::colors() const
-{
-    return impl->m_colors;
-}
-
-TextureContainer& Scene::textures() const
-{
-    return impl->m_textures;
-}
-
-TextureInstanceContainer& Scene::texture_instances() const
-{
-    return impl->m_texture_instances;
-}
-
 EnvironmentEDFContainer& Scene::environment_edfs() const
 {
     return impl->m_environment_edfs;
@@ -140,39 +120,26 @@ EnvironmentShaderContainer& Scene::environment_shaders() const
     return impl->m_environment_shaders;
 }
 
-AssemblyContainer& Scene::assemblies() const
-{
-    return impl->m_assemblies;
-}
-
-AssemblyInstanceContainer& Scene::assembly_instances() const
-{
-    return impl->m_assembly_instances;
-}
-
 GAABB3 Scene::compute_bbox() const
 {
-    return
-        compute_parent_bbox<GAABB3>(
-            impl->m_assembly_instances.begin(),
-            impl->m_assembly_instances.end());
+    const AssemblyInstanceContainer& instances = assembly_instances();
+    return compute_parent_bbox<GAABB3>(instances.begin(), instances.end());
 }
 
 double Scene::compute_radius() const
 {
     double square_radius = 0.0;
 
-    for (const_each<AssemblyInstanceContainer> i = impl->m_assembly_instances; i; ++i)
+    const GAABB3 bbox = compute_bbox();
+
+    if (bbox.is_valid())
     {
-        const AssemblyInstance& inst = *i;
-        const GAABB3 inst_bbox = inst.compute_parent_bbox();
-
         GVector3 corners[8];
-        inst_bbox.compute_corners(corners);
+        bbox.compute_corners(corners);
 
-        for (size_t j = 0; j < 8; ++j)
+        for (size_t i = 0; i < 8; ++i)
         {
-            const double square_distance = square_norm(corners[j]);
+            const double square_distance = square_norm(corners[i]);
 
             if (square_radius < square_distance)
                 square_radius = square_distance;
@@ -185,12 +152,16 @@ double Scene::compute_radius() const
 namespace
 {
     template <typename EntityCollection>
-    void invoke_on_frame_begin(
+    bool invoke_on_frame_begin(
         const Project&          project,
         EntityCollection&       entities)
     {
+        bool success = true;
+
         for (each<EntityCollection> i = entities; i; ++i)
-            i->on_frame_begin(project);
+            success = success && i->on_frame_begin(project);
+
+        return success;
     }
 
     template <typename EntityCollection>
@@ -203,22 +174,30 @@ namespace
     }
 }
 
-void Scene::on_frame_begin(const Project& project)
+bool Scene::on_frame_begin(const Project& project)
 {
-    impl->m_camera->on_frame_begin(project);
+    bool success = true;
 
-    invoke_on_frame_begin(project, environment_edfs());
-    invoke_on_frame_begin(project, environment_shaders());
-    invoke_on_frame_begin(project, assemblies());
+    if (impl->m_camera.get())
+        success = success && impl->m_camera->on_frame_begin(project);
+
+    success = success && invoke_on_frame_begin(project, environment_edfs());
+    success = success && invoke_on_frame_begin(project, environment_shaders());
+    success = success && invoke_on_frame_begin(project, assemblies());
+    success = success && invoke_on_frame_begin(project, assembly_instances());
+
+    return success;
 }
 
 void Scene::on_frame_end(const Project& project)
 {
+    invoke_on_frame_end(project, assembly_instances());
     invoke_on_frame_end(project, assemblies());
     invoke_on_frame_end(project, environment_shaders());
     invoke_on_frame_end(project, environment_edfs());
 
-    impl->m_camera->on_frame_end(project);
+    if (impl->m_camera.get())
+        impl->m_camera->on_frame_end(project);
 }
 
 

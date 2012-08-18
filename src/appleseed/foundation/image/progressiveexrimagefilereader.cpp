@@ -40,14 +40,14 @@
 #include "foundation/utility/memory.h"
 
 // OpenEXR headers.
-#include "openexr/ImathBox.h"
-#include "openexr/ImfChannelList.h"
-#include "openexr/ImfFrameBuffer.h"
-#include "openexr/ImfHeader.h"
-#include "openexr/ImfInputFile.h"
-#include "openexr/ImfPixelType.h"
-#include "openexr/ImfTileDescription.h"
-#include "openexr/ImfTiledInputFile.h"
+#include "OpenEXR/ImathBox.h"
+#include "OpenEXR/ImfChannelList.h"
+#include "OpenEXR/ImfFrameBuffer.h"
+#include "OpenEXR/ImfHeader.h"
+#include "OpenEXR/ImfInputFile.h"
+#include "OpenEXR/ImfPixelType.h"
+#include "OpenEXR/ImfTileDescription.h"
+#include "OpenEXR/ImfTiledInputFile.h"
 
 // Standard headers.
 #include <algorithm>
@@ -231,7 +231,7 @@ void ProgressiveEXRImageFileReader::open(const char* filename)
         impl->m_props.m_rcp_tile_height = 1.0 / impl->m_props.m_tile_height;
         impl->m_props.m_tile_count_x = tile_count_x;
         impl->m_props.m_tile_count_y = tile_count_y;
-        impl->m_props.m_tile_count = impl->m_props.m_tile_count_x * impl->m_props.m_tile_count_y;    
+        impl->m_props.m_tile_count = impl->m_props.m_tile_count_x * impl->m_props.m_tile_count_y;
         impl->m_props.m_pixel_format = pixel_format;
         impl->m_props.m_channel_count = impl->m_alpha ? 4 : 3;
         impl->m_props.m_pixel_size = impl->m_props.m_channel_count * Pixel::size(impl->m_props.m_pixel_format);
@@ -296,26 +296,30 @@ Tile* ProgressiveEXRImageFileReader::read_tile(
     {
         const int ix = static_cast<int>(tile_x);
         const int iy = static_cast<int>(tile_y);
+        const int tw = static_cast<int>(impl->m_props.m_tile_width);
+        const int th = static_cast<int>(impl->m_props.m_tile_height);
 
-        // Retrieve the data window of the tile.
-        Box2i range;
+        // Retrieve the data window and true dimensions of the tile.
+        Box2i dw;
+        size_t tile_width, tile_height;
         if (impl->m_is_tiled)
         {
-            range = impl->m_tiled_file->dataWindowForTile(ix, iy);
+            dw = impl->m_tiled_file->dataWindowForTile(ix, iy);
+
+            tile_width = dw.max.x - dw.min.x + 1;
+            tile_height = dw.max.y - dw.min.y + 1;
         }
         else
         {
-            const int tw = static_cast<int>(impl->m_props.m_tile_width);
-            const int th = static_cast<int>(impl->m_props.m_tile_height);
-            range.min.x = impl->m_dw.min.x + ix * tw;
-            range.min.y = impl->m_dw.min.y + iy * th;
-            range.max.x = min(range.min.x + tw - 1, impl->m_dw.max.x);
-            range.max.y = min(range.min.y + th - 1, impl->m_dw.max.y);
-        }
+            dw.min.x = impl->m_dw.min.x;
+            dw.min.y = impl->m_dw.min.y + iy * th;
+            dw.max.x = impl->m_dw.max.x;
+            dw.max.y = min(dw.min.y + th - 1, impl->m_dw.max.y);
 
-        // Compute the dimensions of the tile.
-        const size_t tile_width = range.max.x - range.min.x + 1;
-        const size_t tile_height = range.max.y - range.min.y + 1;
+            const int min_x = impl->m_dw.min.x + ix * tw;
+            tile_width = min(min_x + tw - 1, impl->m_dw.max.x) - min_x + 1;
+            tile_height = dw.max.y - dw.min.y + 1;
+        }
 
         // Create a new tile.
         Tile* tile =
@@ -330,12 +334,10 @@ Tile* ProgressiveEXRImageFileReader::read_tile(
         const size_t stride_y = impl->m_is_tiled
             ? stride_x * tile_width
             : stride_x * impl->m_props.m_canvas_width;
-        const size_t origin = impl->m_is_tiled
-            ? range.min.y * stride_y + range.min.x * stride_x
-            : range.min.y * stride_y;
-        const char* base = impl->m_is_tiled
-            ? reinterpret_cast<const char*>(tile->pixel(0, 0)) - origin
-            : reinterpret_cast<const char*>(&impl->m_scanlines[0]) - origin;
+        const int origin = static_cast<int>(dw.min.x * stride_x + dw.min.y * stride_y);
+        char* base = impl->m_is_tiled
+            ? reinterpret_cast<char*>(tile->pixel(0, 0)) - origin
+            : reinterpret_cast<char*>(&impl->m_scanlines[0]) - origin;
 
         // Construct the FrameBuffer object.
         FrameBuffer framebuffer;
@@ -343,21 +345,21 @@ Tile* ProgressiveEXRImageFileReader::read_tile(
             "R",
             Slice(
                 impl->m_red->type,
-                const_cast<char*>(base + 0 * channel_size),
+                base + 0 * channel_size,
                 stride_x,
                 stride_y));
         framebuffer.insert(
             "G",
             Slice(
                 impl->m_green->type,
-                const_cast<char*>(base + 1 * channel_size),
+                base + 1 * channel_size,
                 stride_x,
                 stride_y));
         framebuffer.insert(
             "B",
             Slice(
                 impl->m_blue->type,
-                const_cast<char*>(base + 2 * channel_size),
+                base + 2 * channel_size,
                 stride_x,
                 stride_y));
         if (impl->m_alpha)
@@ -366,7 +368,7 @@ Tile* ProgressiveEXRImageFileReader::read_tile(
                 "A",
                 Slice(
                     impl->m_alpha->type,
-                    const_cast<char*>(base + 3 * channel_size),
+                    base + 3 * channel_size,
                     stride_x,
                     stride_y));
         }
@@ -383,14 +385,14 @@ Tile* ProgressiveEXRImageFileReader::read_tile(
             {
                 // Read the scanlines intersecting the tile.
                 impl->m_scanline_file->setFrameBuffer(framebuffer);
-                impl->m_scanline_file->readPixels(range.min.y, range.max.y);
+                impl->m_scanline_file->readPixels(dw.min.y, dw.max.y);
                 impl->m_last_tile_y = tile_y;
             }
 
             // Extract the tile from the scanlines.
             for (size_t y = 0; y < tile_height; ++y)
             {
-                const size_t index = (impl->m_props.m_canvas_width * y + range.min.x) * stride_x;
+                const size_t index = (impl->m_props.m_canvas_width * y + ix * tw) * stride_x;
                 memcpy(
                     tile->pixel(0, y),
                     &impl->m_scanlines[index],

@@ -75,6 +75,9 @@ class FOUNDATIONDLL SearchPaths
     // Destructor.
     ~SearchPaths();
 
+    // Remove all search paths.
+    void clear();
+
     // Insert a search path at the end of the collection.
     void push_back(const char* path);
     template <typename T> void push_back(const std::basic_string<T>& path);
@@ -88,6 +91,12 @@ class FOUNDATIONDLL SearchPaths
     // Find a file in the search paths. If the file was found, the qualified path to
     // this file is returned. Otherwise the input path is returned.
     template <typename T> std::basic_string<T> qualify(const std::basic_string<T>& filepath) const;
+
+    // Iterators, used in python bindings
+    typedef std::vector<std::string>::const_iterator ConstIterator;
+
+    ConstIterator begin() const;
+    ConstIterator end() const;
 
   private:
     struct Impl;

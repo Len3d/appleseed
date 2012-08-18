@@ -41,6 +41,7 @@
 #include "renderer/modeling/scene/containers.h"
 #include "renderer/modeling/scene/objectinstance.h"
 #include "renderer/modeling/scene/scene.h"
+#include "renderer/utility/transformsequence.h"
 
 // appleseed.foundation headers.
 #include "foundation/core/exceptions/exceptionnotimplemented.h"
@@ -92,9 +93,7 @@ namespace
 }
 
 LightSampler::LightSampler(const Scene& scene)
-  : m_light_count(0)
-  , m_total_emissive_area(0.0)
-  , m_rcp_total_emissive_area(0.0)
+  : m_total_emissive_area(0.0)
 {
     RENDERER_LOG_INFO("collecting light emitters...");
 
@@ -106,9 +105,11 @@ LightSampler::LightSampler(const Scene& scene)
     m_light_count = m_lights.size();
     m_rcp_total_emissive_area = 1.0 / m_total_emissive_area;
 
-    // Prepare the CDF for sampling.
-    if (m_light_cdf.valid())
-        m_light_cdf.prepare();
+    // Prepare the CDFs for sampling.
+    if (m_emitter_cdf.valid())
+        m_emitter_cdf.prepare();
+    if (m_emitting_triangle_cdf.valid())
+        m_emitting_triangle_cdf.prepare();
 
     RENDERER_LOG_INFO(
         "found %s %s, %s emitting %s.",
@@ -141,7 +142,7 @@ void LightSampler::collect_lights(const AssemblyInstance& assembly_instance)
         const double importance = 1.0;
 
         // Insert the light into the CDF.
-        m_light_cdf.insert(light_index, importance);
+        m_emitter_cdf.insert(light_index, importance);
     }
 }
 
@@ -150,18 +151,18 @@ void LightSampler::collect_emitting_triangles(const Scene& scene)
     for (const_each<AssemblyInstanceContainer> i = scene.assembly_instances(); i; ++i)
     {
         const AssemblyInstance& assembly_instance = *i;
-        const Assembly& assembly = assembly_instance.get_assembly();
 
-        if (has_emitting_materials(assembly))
-            collect_emitting_triangles(assembly_instance, assembly);
+        if (has_emitting_materials(assembly_instance.get_assembly()))
+            collect_emitting_triangles(scene, assembly_instance);
     }
 }
 
 void LightSampler::collect_emitting_triangles(
-    const AssemblyInstance& assembly_instance,
-    const Assembly&         assembly)
+    const Scene&            scene,
+    const AssemblyInstance& assembly_instance)
 {
     // Loop over the object instances of the assembly.
+    const Assembly& assembly = assembly_instance.get_assembly();
     const size_t object_instance_count = assembly.object_instances().size();
     for (size_t object_instance_index = 0; object_instance_index < object_instance_count; ++object_instance_index)
     {
@@ -177,8 +178,12 @@ void LightSampler::collect_emitting_triangles(
             continue;
 
         // Compute the object space to world space transformation.
+        // todo: add support for moving light-emitters.
         const Transformd& object_instance_transform = object_instance->get_transform();
-        const Transformd& assembly_instance_transform = assembly_instance.get_transform();
+        const Transformd assembly_instance_transform =
+            assembly_instance.transform_sequence().empty()
+                ? Transformd(Matrix4d::identity())
+                : assembly_instance.transform_sequence().earliest_transform();
         const Transformd global_transform = assembly_instance_transform * object_instance_transform;
 
         // Retrieve the object.
@@ -222,9 +227,9 @@ void LightSampler::collect_emitting_triangles(
                 const GVector3& v2_os = tess->m_vertices[triangle.m_v2];
 
                 // Transform triangle vertices to assembly space.
-                const GVector3 v0_as = object_instance_transform.transform_point_to_parent(v0_os);
-                const GVector3 v1_as = object_instance_transform.transform_point_to_parent(v1_os);
-                const GVector3 v2_as = object_instance_transform.transform_point_to_parent(v2_os);
+                const GVector3 v0_as = object_instance_transform.point_to_parent(v0_os);
+                const GVector3 v1_as = object_instance_transform.point_to_parent(v1_os);
+                const GVector3 v2_as = object_instance_transform.point_to_parent(v2_os);
 
                 // Compute the support plane of the hit triangle in assembly space.
                 const GTriangleType triangle_geometry(v0_as, v1_as, v2_as);
@@ -232,9 +237,9 @@ void LightSampler::collect_emitting_triangles(
                 triangle_support_plane.initialize(TriangleType(triangle_geometry));
 
                 // Transform triangle vertices to world space.
-                const Vector3d v0(assembly_instance_transform.transform_point_to_parent(v0_as));
-                const Vector3d v1(assembly_instance_transform.transform_point_to_parent(v1_as));
-                const Vector3d v2(assembly_instance_transform.transform_point_to_parent(v2_as));
+                const Vector3d v0(assembly_instance_transform.point_to_parent(v0_as));
+                const Vector3d v1(assembly_instance_transform.point_to_parent(v1_as));
+                const Vector3d v2(assembly_instance_transform.point_to_parent(v2_as));
 
                 // Compute the geometric normal to the triangle and the area of the triangle.
                 Vector3d geometric_normal = cross(v1 - v0, v2 - v0);
@@ -253,9 +258,9 @@ void LightSampler::collect_emitting_triangles(
                 const GVector3& n2_os = tess->m_vertex_normals[triangle.m_n2];
 
                 // Transform vertex normals to world space.
-                const Vector3d n0(normalize(global_transform.transform_normal_to_parent(n0_os)));
-                const Vector3d n1(normalize(global_transform.transform_normal_to_parent(n1_os)));
-                const Vector3d n2(normalize(global_transform.transform_normal_to_parent(n2_os)));
+                const Vector3d n0(normalize(global_transform.normal_to_parent(n0_os)));
+                const Vector3d n1(normalize(global_transform.normal_to_parent(n1_os)));
+                const Vector3d n2(normalize(global_transform.normal_to_parent(n2_os)));
 
                 for (size_t side = 0; side < 2; ++side)
                 {
@@ -271,7 +276,7 @@ void LightSampler::collect_emitting_triangles(
 
                     // Create a light-emitting triangle.
                     EmittingTriangle emitting_triangle;
-                    emitting_triangle.m_assembly_instance_uid = assembly_instance.get_uid();
+                    emitting_triangle.m_assembly_instance = &assembly_instance;
                     emitting_triangle.m_object_instance_index = object_instance_index;
                     emitting_triangle.m_region_index = region_index;
                     emitting_triangle.m_triangle_index = triangle_index;
@@ -287,11 +292,12 @@ void LightSampler::collect_emitting_triangles(
                     emitting_triangle.m_edf = material->get_edf();
 
                     // Store the light-emitting triangle.
-                    const size_t emitting_triangle_index = m_lights.size() + m_emitting_triangles.size();
+                    const size_t emitting_triangle_index = m_emitting_triangles.size();
                     m_emitting_triangles.push_back(emitting_triangle);
 
-                    // Insert the light-emitting triangle into the CDF.
-                    m_light_cdf.insert(emitting_triangle_index, area);
+                    // Insert the light-emitting triangle into the CDFs.
+                    m_emitter_cdf.insert(emitting_triangle_index + m_lights.size(), area);
+                    m_emitting_triangle_cdf.insert(emitting_triangle_index, area);
 
                     // Keep track of the total area of the light-emitting triangles.
                     m_total_emissive_area += area;
@@ -301,65 +307,50 @@ void LightSampler::collect_emitting_triangles(
     }
 }
 
-bool LightSampler::sample(
+void LightSampler::sample_single_light(
+    const size_t            light_index,
+    const Vector2d&         s,
+    LightSample&            sample) const
+{
+    sample.m_triangle = 0;
+    sample_light(s, light_index, 1.0, sample);
+
+    assert(sample.m_light);
+    assert(sample.m_probability == 1.0);
+}
+
+void LightSampler::sample_emitting_triangles(
     const Vector3d&         s,
     LightSample&            sample) const
 {
-    // No light source in the scene.
-    if (!m_light_cdf.valid())
-        return false;
+    assert(m_emitting_triangle_cdf.valid());
 
-    sample_emitters(s, sample);
-
-    return true;
-}
-
-bool LightSampler::sample(
-    SamplingContext&        sampling_context,
-    LightSample&            sample) const
-{
-    // No light source in the scene.
-    if (!m_light_cdf.valid())
-        return false;
-
-    sampling_context.split_in_place(3, 1);
-
-    sample_emitters(sampling_context.next_vector2<3>(), sample);
-
-    return true;
-}
-
-bool LightSampler::sample(
-    SamplingContext&        sampling_context,
-    const size_t            sample_count,
-    LightSampleVector&      samples) const
-{
-    // No light source in the scene.
-    if (!m_light_cdf.valid())
-        return false;
-
-    sampling_context.split_in_place(3, sample_count);
-
-    for (size_t i = 0; i < sample_count; ++i)
-    {
-        LightSample sample;
-        sample_emitters(sampling_context.next_vector2<3>(), sample);
-        samples.push_back(sample);
-    }
-
-    return true;
-}
-
-void LightSampler::sample_emitters(
-    const Vector3d&         s,
-    LightSample&            sample) const
-{
-    // Sample the set of emitters (lights and emitting triangles).
-    const LightCDF::ItemWeightPair result = m_light_cdf.sample(s[0]);
+    const EmitterCDF::ItemWeightPair result = m_emitting_triangle_cdf.sample(s[0]);
     const size_t emitter_index = result.first;
     const double emitter_prob = result.second;
 
-    // Generate one sample on the chosen emitter.
+    sample.m_light = 0;
+    sample_emitting_triangle(
+        Vector2d(s[1], s[2]),
+        emitter_index,
+        emitter_prob,
+        sample);
+
+    assert(sample.m_triangle);
+    assert(sample.m_triangle->m_edf);
+    assert(sample.m_probability > 0.0);
+}
+
+void LightSampler::sample(
+    const Vector3d&         s,
+    LightSample&            sample) const
+{
+    assert(m_emitter_cdf.valid());
+
+    const EmitterCDF::ItemWeightPair result = m_emitter_cdf.sample(s[0]);
+    const size_t emitter_index = result.first;
+    const double emitter_prob = result.second;
+
     if (emitter_index < m_light_count)
     {
         sample.m_triangle = 0;
@@ -379,8 +370,8 @@ void LightSampler::sample_emitters(
             sample);
     }
 
-    assert(sample.m_triangle != 0 || sample.m_light != 0);
-    assert(sample.m_triangle == 0 || sample.m_triangle->m_edf != 0);
+    assert(sample.m_triangle || sample.m_light);
+    assert(sample.m_triangle == 0 || sample.m_triangle->m_edf);
     assert(sample.m_probability > 0.0);
 }
 

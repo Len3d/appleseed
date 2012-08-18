@@ -44,6 +44,10 @@
 // Standard headers.
 #include <cassert>
 
+// Forward declarations.
+namespace renderer  { class Assembly; }
+namespace renderer  { class Project; }
+
 using namespace foundation;
 
 namespace renderer
@@ -67,6 +71,7 @@ namespace
           : EDF(name, params)
         {
             m_inputs.declare("exitance", InputFormatSpectrum);
+            m_inputs.declare("exitance_multiplier", InputFormatScalar, "1.0");
         }
 
         virtual void release() override
@@ -77,6 +82,18 @@ namespace
         virtual const char* get_model() const override
         {
             return Model;
+        }
+
+        virtual bool on_frame_begin(
+            const Project&      project,
+            const Assembly&     assembly) override
+        {
+            if (!EDF::on_frame_begin(project, assembly))
+                return false;
+
+            check_exitance_input_non_null("exitance", "exitance_multiplier");
+
+            return true;
         }
 
         virtual void sample(
@@ -95,6 +112,7 @@ namespace
 
             const InputValues* values = static_cast<const InputValues*>(data);
             value = values->m_exitance;
+            value *= static_cast<float>(values->m_exitance_multiplier);
 
             probability = wo.y * RcpPi;
             assert(probability > 0.0);
@@ -121,6 +139,7 @@ namespace
 
             const InputValues* values = static_cast<const InputValues*>(data);
             value = values->m_exitance;
+            value *= static_cast<float>(values->m_exitance_multiplier);
         }
 
         virtual void evaluate(
@@ -146,6 +165,7 @@ namespace
 
             const InputValues* values = static_cast<const InputValues*>(data);
             value = values->m_exitance;
+            value *= static_cast<float>(values->m_exitance_multiplier);
 
             probability = cos_on * RcpPi;
         }
@@ -171,8 +191,9 @@ namespace
       private:
         struct InputValues
         {
-            Spectrum    m_exitance;         // radiant exitance, in W.m^-2
-            Alpha       m_exitance_alpha;   // alpha channel of radiant exitance
+            Spectrum    m_exitance;             // radiant exitance, in W.m^-2
+            Alpha       m_exitance_alpha;       // unused
+            double      m_exitance_multiplier;  // radiant exitance multiplier
         };
     };
 }
@@ -207,6 +228,16 @@ DictionaryArray DiffuseEDFFactory::get_widget_definitions() const
                     .insert("texture_instance", "Textures"))
             .insert("use", "required")
             .insert("default", ""));
+
+    definitions.push_back(
+        Dictionary()
+            .insert("name", "exitance_multiplier")
+            .insert("label", "Exitance Multiplier")
+            .insert("widget", "entity_picker")
+            .insert("entity_types",
+                Dictionary().insert("texture_instance", "Textures"))
+            .insert("use", "optional")
+            .insert("default", "1.0"));
 
     return definitions;
 }

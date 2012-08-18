@@ -40,11 +40,15 @@
 #include "foundation/math/sampling.h"
 #include "foundation/math/scalar.h"
 #include "foundation/math/vector.h"
+#include "foundation/platform/compiler.h"
 #include "foundation/utility/containers/dictionary.h"
 
 // Standard headers.
 #include <cassert>
 #include <cmath>
+
+// Forward declarations.
+namespace renderer  { class Project; }
 
 using namespace foundation;
 using namespace std;
@@ -75,16 +79,27 @@ namespace
           : EnvironmentEDF(name, params)
         {
             m_inputs.declare("exitance", InputFormatSpectrum);
+            m_inputs.declare("exitance_multiplier", InputFormatScalar, "1.0");
         }
 
-        virtual void release()
+        virtual void release() override
         {
             delete this;
         }
 
-        virtual const char* get_model() const
+        virtual const char* get_model() const override
         {
             return Model;
+        }
+
+        virtual bool on_frame_begin(const Project& project) override
+        {
+            if (!EnvironmentEDF::on_frame_begin(project))
+                return false;
+
+            check_exitance_input_non_null("exitance", "exitance_multiplier");
+
+            return true;
         }
 
         virtual void sample(
@@ -92,7 +107,7 @@ namespace
             const Vector2d&     s,
             Vector3d&           outgoing,
             Spectrum&           value,
-            double&             probability) const
+            double&             probability) const override
         {
             outgoing = sample_sphere_uniform(s);
             lookup_envmap(input_evaluator, outgoing, value);
@@ -102,7 +117,7 @@ namespace
         virtual void evaluate(
             InputEvaluator&     input_evaluator,
             const Vector3d&     outgoing,
-            Spectrum&           value) const
+            Spectrum&           value) const override
         {
             assert(is_normalized(outgoing));
             lookup_envmap(input_evaluator, outgoing, value);
@@ -112,7 +127,7 @@ namespace
             InputEvaluator&     input_evaluator,
             const Vector3d&     outgoing,
             Spectrum&           value,
-            double&             probability) const
+            double&             probability) const override
         {
             assert(is_normalized(outgoing));
             lookup_envmap(input_evaluator, outgoing, value);
@@ -121,7 +136,7 @@ namespace
 
         virtual double evaluate_pdf(
             InputEvaluator&     input_evaluator,
-            const Vector3d&     outgoing) const
+            const Vector3d&     outgoing) const override
         {
             assert(is_normalized(outgoing));
             return 1.0 / (4.0 * Pi);
@@ -132,6 +147,7 @@ namespace
         {
             Spectrum    m_exitance;
             Alpha       m_exitance_alpha;       // unused
+            double      m_exitance_multiplier;
         };
 
         void lookup_envmap(
@@ -147,6 +163,7 @@ namespace
             // Evaluate the input.
             const InputValues* values = input_evaluator.evaluate<InputValues>(m_inputs, uv);
             value = values->m_exitance;
+            value *= static_cast<float>(values->m_exitance_multiplier);
         }
     };
 }
@@ -181,6 +198,16 @@ DictionaryArray MirrorBallMapEnvironmentEDFFactory::get_widget_definitions() con
                     .insert("texture_instance", "Textures"))
             .insert("use", "required")
             .insert("default", ""));
+
+    definitions.push_back(
+        Dictionary()
+            .insert("name", "exitance_multiplier")
+            .insert("label", "Exitance Multiplier")
+            .insert("widget", "entity_picker")
+            .insert("entity_types",
+                Dictionary().insert("texture_instance", "Textures"))
+            .insert("use", "optional")
+            .insert("default", "1.0"));
 
     return definitions;
 }

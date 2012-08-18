@@ -31,6 +31,7 @@
 
 // appleseed.renderer headers.
 #include "renderer/global/globaltypes.h"
+#include "renderer/kernel/intersection/intersectionfilter.h"
 #include "renderer/kernel/intersection/intersectionsettings.h"
 #include "renderer/kernel/intersection/probevisitorbase.h"
 #include "renderer/kernel/intersection/regioninfo.h"
@@ -43,6 +44,8 @@
 #include "foundation/math/aabb.h"
 #include "foundation/math/bvh.h"
 #include "foundation/math/intersection.h"
+#include "foundation/math/scalar.h"
+#include "foundation/platform/types.h"
 #include "foundation/utility/alignedvector.h"
 #include "foundation/utility/lazy.h"
 #include "foundation/utility/poolallocator.h"
@@ -57,30 +60,11 @@
 // Forward declarations.
 namespace foundation    { class Statistics; }
 namespace renderer      { class Assembly; }
+namespace renderer      { class Scene; }
+namespace renderer      { class TriangleVertexInfo; }
 
 namespace renderer
 {
-
-//
-// A helper structure to locate all the vertices that belong to a triangle.
-//
-
-struct TriangleVertexInfo
-{
-    size_t  m_vertex_index;             // index of the first vertex in the vertex array
-    size_t  m_motion_segment_count;     // number of motion segments for this triangle
-
-    TriangleVertexInfo() {}
-
-    TriangleVertexInfo(
-        const size_t    vertex_index,
-        const size_t    motion_segment_count)
-      : m_vertex_index(vertex_index)
-      , m_motion_segment_count(motion_segment_count)
-    {
-    }
-};
-
 
 //
 // Triangle tree.
@@ -97,6 +81,7 @@ class TriangleTree
     // Construction arguments.
     struct Arguments
     {
+        const Scene&                            m_scene;
         const foundation::UniqueID              m_triangle_tree_uid;
         const GAABB3                            m_bbox;
         const Assembly&                         m_assembly;
@@ -104,6 +89,7 @@ class TriangleTree
 
         // Constructor.
         Arguments(
+            const Scene&                        scene,
             const foundation::UniqueID          triangle_tree_uid,
             const GAABB3&                       bbox,
             const Assembly&                     assembly,
@@ -127,19 +113,35 @@ class TriangleTree
     std::vector<TriangleKey>                    m_triangle_keys;
     std::vector<foundation::uint8>              m_leaf_data;
 
+    bool                                        m_has_intersection_filters;
+    std::vector<const IntersectionFilter*>      m_intersection_filters;
+
     void build_bvh(
         const Arguments&                        arguments,
+        const double                            time,
         foundation::Statistics&                 statistics);
 
     void build_sbvh(
         const Arguments&                        arguments,
+        const double                            time,
         foundation::Statistics&                 statistics);
+
+    std::vector<GAABB3> compute_motion_bboxes(
+        const std::vector<size_t>&              triangle_indices,
+        const std::vector<TriangleVertexInfo>&  triangle_vertex_infos,
+        const std::vector<GVector3>&            triangle_vertices,
+        const size_t                            node_index);
 
     void store_triangles(
         const std::vector<size_t>&              triangle_indices,
         const std::vector<TriangleVertexInfo>&  triangle_vertex_infos,
         const std::vector<GVector3>&            triangle_vertices,
-        const std::vector<TriangleKey>&         triangle_keys);
+        const std::vector<TriangleKey>&         triangle_keys,
+        foundation::Statistics&                 statistics);
+
+    void create_intersection_filters(
+        const Arguments&                        arguments,
+        foundation::Statistics&                 statistics);
 };
 
 
@@ -360,6 +362,16 @@ inline bool TriangleLeafVisitor::visit(
             double t, u, v;
             if (reader.m_triangle.intersect(m_shading_point.m_ray, t, u, v))
             {
+                // Optionally filter intersections.
+                if (m_tree.m_has_intersection_filters)
+                {
+                    const TriangleKey& triangle_key = m_tree.m_triangle_keys[triangle_index + i];
+                    const IntersectionFilter* filter =
+                        m_tree.m_intersection_filters[triangle_key.get_object_instance_index()];
+                    if (filter && !filter->accept(triangle_key, u, v))
+                        continue;
+                }
+
                 m_hit_triangle = triangle_ptr;
                 m_hit_triangle_index = triangle_index + i;
                 m_shading_point.m_ray.m_tmax = t;
@@ -377,9 +389,9 @@ inline bool TriangleLeafVisitor::visit(
 
             // Interpolate triangle vertices.
             const GScalar k = static_cast<GScalar>(ray.m_time * motion_segment_count - prev_index);
-            const GVector3 vert0 = (GScalar(1.0) - k) * prev_vertices[0] + k * next_vertices[0];
-            const GVector3 vert1 = (GScalar(1.0) - k) * prev_vertices[1] + k * next_vertices[1];
-            const GVector3 vert2 = (GScalar(1.0) - k) * prev_vertices[2] + k * next_vertices[2];
+            const GVector3 vert0 = foundation::lerp(prev_vertices[0], next_vertices[0], k);
+            const GVector3 vert1 = foundation::lerp(prev_vertices[1], next_vertices[1], k);
+            const GVector3 vert2 = foundation::lerp(prev_vertices[2], next_vertices[2], k);
 
             // Load the triangle, converting it to the right format if necessary.
             const GTriangleType triangle(vert0, vert1, vert2);
@@ -389,6 +401,16 @@ inline bool TriangleLeafVisitor::visit(
             double t, u, v;
             if (reader.m_triangle.intersect(m_shading_point.m_ray, t, u, v))
             {
+                // Optionally filter intersections.
+                if (m_tree.m_has_intersection_filters)
+                {
+                    const TriangleKey& triangle_key = m_tree.m_triangle_keys[triangle_index + i];
+                    const IntersectionFilter* filter =
+                        m_tree.m_intersection_filters[triangle_key.get_object_instance_index()];
+                    if (filter && !filter->accept(triangle_key, u, v))
+                        continue;
+                }
+
                 m_interpolated_triangle = triangle;
                 m_hit_triangle = &m_interpolated_triangle;
                 m_hit_triangle_index = triangle_index + i;
@@ -490,9 +512,9 @@ inline bool TriangleLeafProbeVisitor::visit(
 
             // Interpolate triangle vertices.
             const GScalar k = static_cast<GScalar>(ray.m_time * motion_segment_count - prev_index);
-            const GVector3 vert0 = (GScalar(1.0) - k) * prev_vertices[0] + k * next_vertices[0];
-            const GVector3 vert1 = (GScalar(1.0) - k) * prev_vertices[1] + k * next_vertices[1];
-            const GVector3 vert2 = (GScalar(1.0) - k) * prev_vertices[2] + k * next_vertices[2];
+            const GVector3 vert0 = foundation::lerp(prev_vertices[0], next_vertices[0], k);
+            const GVector3 vert1 = foundation::lerp(prev_vertices[1], next_vertices[1], k);
+            const GVector3 vert2 = foundation::lerp(prev_vertices[2], next_vertices[2], k);
 
             // Load the triangle, converting it to the right format if necessary.
             const GTriangleType triangle(vert0, vert1, vert2);

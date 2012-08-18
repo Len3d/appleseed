@@ -52,11 +52,13 @@
 #include "foundation/image/canvasproperties.h"
 #include "foundation/image/image.h"
 #include "foundation/platform/compiler.h"
+#include "foundation/platform/system.h"
 #include "foundation/platform/types.h"
 #include "foundation/utility/containers/dictionary.h"
 #include "foundation/utility/autoreleaseptr.h"
 #include "foundation/utility/foreach.h"
 #include "foundation/utility/settings.h"
+#include "foundation/utility/string.h"
 
 // Qt headers.
 #include <QAction>
@@ -105,8 +107,8 @@ MainWindow::MainWindow(QWidget* parent)
 
     build_connections();
 
+    print_startup_information();
     slot_load_settings();
-    print_library_information();
 
     update_workspace();
     update_project_explorer();
@@ -136,6 +138,7 @@ void MainWindow::build_menus()
     connect(m_ui->action_rendering_start_interactive_rendering, SIGNAL(triggered()), this, SLOT(slot_start_interactive_rendering()));
     connect(m_ui->action_rendering_start_final_rendering, SIGNAL(triggered()), this, SLOT(slot_start_final_rendering()));
     connect(m_ui->action_rendering_stop_rendering, SIGNAL(triggered()), this, SLOT(slot_stop_rendering()));
+    connect(m_ui->action_rendering_render_settings, SIGNAL(triggered()), this, SLOT(slot_show_render_settings_window()));
 
     // Diagnostics menu.
     build_override_shading_menu_item();
@@ -276,7 +279,14 @@ LogWidget* MainWindow::create_log_widget() const
     log_widget->setStyleSheet("QTextEdit { border: 0px; }");
 
     QFont font;
+    font.setStyleHint(QFont::TypeWriter);
+#if defined _WIN32
     font.setFamily(QString::fromUtf8("Consolas"));
+#elif defined __APPLE__
+    font.setFamily(QString::fromUtf8("Monaco"));
+#else
+    font.setFamily(QString::fromUtf8("Courier New"));
+#endif
     font.setPixelSize(11);
     log_widget->setFont(font);
 
@@ -297,8 +307,8 @@ void MainWindow::build_project_explorer()
     m_ui->treewidget_project_explorer_scene->setColumnWidth(0, 220);    // name
     m_ui->treewidget_project_explorer_scene->setColumnWidth(1, 75);     // render layer
 
-    disable_mac_focus_rect(*m_ui->treewidget_project_explorer_scene);
-    disable_mac_focus_rect(*m_ui->treewidget_project_explorer_renders);
+    disable_mac_focus_rect(m_ui->treewidget_project_explorer_scene);
+    disable_mac_focus_rect(m_ui->treewidget_project_explorer_renders);
 
     connect(
         m_ui->lineedit_filter, SIGNAL(textChanged(const QString&)),
@@ -322,7 +332,7 @@ void MainWindow::build_connections()
         this, SLOT(slot_camera_changed()));
 }
 
-void MainWindow::print_library_information()
+void MainWindow::print_startup_information()
 {
     RENDERER_LOG_INFO(
         "%s, %s configuration\n"
@@ -333,6 +343,18 @@ void MainWindow::print_library_information()
         Appleseed::get_lib_compilation_time(),
         Compiler::get_compiler_name(),
         Compiler::get_compiler_version());
+
+    RENDERER_LOG_INFO(
+        "system information:\n"
+        "  L1 data cache    size %s, line size %s\n"
+        "  L2 cache         size %s, line size %s\n"
+        "  L3 cache         size %s, line size %s\n",
+        pretty_size(System::get_l1_data_cache_size()).c_str(),
+        pretty_size(System::get_l1_data_cache_line_size()).c_str(),
+        pretty_size(System::get_l2_cache_size()).c_str(),
+        pretty_size(System::get_l2_cache_line_size()).c_str(),
+        pretty_size(System::get_l3_cache_size()).c_str(),
+        pretty_size(System::get_l3_cache_line_size()).c_str());
 }
 
 ParamArray MainWindow::get_project_params(const char* configuration_name) const
@@ -408,6 +430,9 @@ void MainWindow::on_project_change()
     update_project_explorer();
     update_override_shading_menu_item();
 
+    if (m_render_settings_window.get())
+        m_render_settings_window->reload();
+
     m_ui->lineedit_filter->clear();
     m_status_bar.clear();
 }
@@ -473,9 +498,6 @@ void MainWindow::enable_disable_menu_items(const bool rendering)
     const bool is_project_open = m_project_manager.is_project_open();
 
     const bool allow_replacing_project = !rendering;
-    const bool allow_saving_project = is_project_open && !rendering;
-    const bool allow_starting_rendering = is_project_open && !rendering;
-    const bool allow_stopping_rendering = is_project_open && rendering;
 
     // File -> New Project.
     m_ui->action_file_new_project->setEnabled(allow_replacing_project);
@@ -494,12 +516,17 @@ void MainWindow::enable_disable_menu_items(const bool rendering)
         m_project_manager.get_project()->has_path() &&
         !rendering);
 
+    const bool allow_saving_project = is_project_open && !rendering;
+
     // File -> Save Project.
     m_ui->action_file_save_project->setEnabled(allow_saving_project);
     m_action_save_project->setEnabled(allow_saving_project);
 
     // File -> Save Project As.
     m_ui->action_file_save_project_as->setEnabled(allow_saving_project);
+
+    const bool allow_starting_rendering = is_project_open && !rendering;
+    const bool allow_stopping_rendering = is_project_open && rendering;
 
     // Rendering -> Start Interactive Rendering.
     m_ui->action_rendering_start_interactive_rendering->setEnabled(allow_starting_rendering);
@@ -512,6 +539,9 @@ void MainWindow::enable_disable_menu_items(const bool rendering)
     // Rendering -> Stop Rendering.
     m_ui->action_rendering_stop_rendering->setEnabled(allow_stopping_rendering);
     m_action_stop_rendering->setEnabled(allow_stopping_rendering);
+
+    // Rendering -> Render Settings.
+    m_ui->action_rendering_render_settings->setEnabled(is_project_open && !rendering);
 }
 
 void MainWindow::recreate_render_widgets()
@@ -605,7 +635,7 @@ void MainWindow::start_rendering(const bool interactive)
     m_rendering_manager.start_rendering(
         m_project_manager.get_project(),
         params,
-        !interactive,
+        interactive,
         m_render_widgets["RGB"]->m_render_widget);
 }
 
@@ -707,10 +737,10 @@ void MainWindow::slot_open_project()
             &selected_filter,
             options);
 
-    filepath = QDir::toNativeSeparators(filepath);
-
     if (!filepath.isEmpty())
     {
+        filepath = QDir::toNativeSeparators(filepath);
+
         const filesystem::path path(filepath.toStdString());
 
         m_settings.insert_path(
@@ -801,10 +831,10 @@ void MainWindow::slot_save_project_as()
             &selected_filter,
             options);
 
-    filepath = QDir::toNativeSeparators(filepath);
-
     if (!filepath.isEmpty())
     {
+        filepath = QDir::toNativeSeparators(filepath);
+
         const filesystem::path path(filepath.toStdString());
 
         m_settings.insert_path(
@@ -851,6 +881,23 @@ void MainWindow::slot_camera_changed()
     m_project_manager.set_project_dirty_flag();
 }
 
+void MainWindow::slot_show_render_settings_window()
+{
+    assert(m_project_manager.is_project_open());
+
+    if (m_render_settings_window.get() == 0)
+    {
+        m_render_settings_window.reset(new RenderSettingsWindow(m_project_manager, this));
+
+        QObject::connect(
+            m_render_settings_window.get(), SIGNAL(signal_settings_modified()),
+            this, SLOT(slot_project_modified()));
+    }
+
+    m_render_settings_window->showNormal();
+    m_render_settings_window->activateWindow();
+}
+
 void MainWindow::slot_show_test_window()
 {
     if (m_test_window.get() == 0)
@@ -872,8 +919,6 @@ void MainWindow::slot_show_benchmark_window()
 void MainWindow::slot_show_about_window()
 {
     AboutWindow* about_window = new AboutWindow(this);
-
-    about_window->center();
     about_window->showNormal();
     about_window->activateWindow();
 }
@@ -881,8 +926,8 @@ void MainWindow::slot_show_about_window()
 void MainWindow::slot_load_settings()
 {
     const filesystem::path root_path(Application::get_root_path());
-    const filesystem::path settings_file_path = root_path / "settings/appleseed.studio.xml";
-    const filesystem::path schema_file_path = root_path / "schemas/settings.xsd";
+    const string settings_file_path = (root_path / "settings" / "appleseed.studio.xml").string();
+    const string schema_file_path = (root_path / "schemas" / "settings.xsd").string();
 
     SettingsFileReader reader(global_logger());
 
@@ -890,24 +935,36 @@ void MainWindow::slot_load_settings()
 
     const bool success =
         reader.read(
-            settings_file_path.string().c_str(),
-            schema_file_path.string().c_str(),
+            settings_file_path.c_str(),
+            schema_file_path.c_str(),
             settings);
 
     if (success)
+    {
+        RENDERER_LOG_INFO("successfully loaded settings from %s.", settings_file_path.c_str());
         m_settings = settings;
+    }
+    else
+    {
+        RENDERER_LOG_ERROR("failed to load settings from %s.", settings_file_path.c_str());
+    }
 }
 
 void MainWindow::slot_save_settings()
 {
     const filesystem::path root_path(Application::get_root_path());
-    const filesystem::path settings_file_path = root_path / "settings/appleseed.studio.xml";
+    const string settings_file_path = (root_path / "settings" / "appleseed.studio.xml").string();
 
     SettingsFileWriter writer;
 
-    writer.write(
-        settings_file_path.string().c_str(),
-        m_settings);
+    const bool success =
+        writer.write(
+            settings_file_path.c_str(),
+            m_settings);
+
+    if (success)
+        RENDERER_LOG_INFO("successfully saved settings to %s.", settings_file_path.c_str());
+    else RENDERER_LOG_ERROR("failed to save settings to %s.", settings_file_path.c_str());
 }
 
 namespace
@@ -976,10 +1033,10 @@ void MainWindow::slot_save_frame()
             &selected_filter,
             options);
 
-    filepath = QDir::toNativeSeparators(filepath);
-
     if (!filepath.isEmpty())
     {
+        filepath = QDir::toNativeSeparators(filepath);
+
         const Project* project = m_project_manager.get_project();
         project->get_frame()->write(filepath.toAscii().constData());
     }
