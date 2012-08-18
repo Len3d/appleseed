@@ -156,6 +156,19 @@ source_group ("foundation\\math\\bvh" FILES
     ${foundation_math_bvh_sources}
 )
 
+set (foundation_math_qbvh_sources
+    foundation/math/qbvh/bvh_to_qbvh_convertor.h
+    foundation/math/qbvh/qbvh_intersector.h
+    foundation/math/qbvh/qbvh_node.h
+    foundation/math/qbvh/qbvh_tree.h
+)
+list (APPEND appleseed_sources
+    ${foundation_math_qbvh_sources}
+)
+source_group ("foundation\\math\\qbvh" FILES
+    ${foundation_math_qbvh_sources}
+)
+
 set (foundation_math_intersection_sources
     foundation/math/intersection/aabbtriangle.h
     foundation/math/intersection/rayaabb.h
