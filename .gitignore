@@ -1,2 +1,5 @@
-/build/
-/community/
+build/
+__pycache__
+*.pyc
+CMakeLists.txt.user
+

@@ -30,11 +30,26 @@
 #include "edfenvironmentshader.h"
 
 // appleseed.renderer headers.
+#include "renderer/global/globallogger.h"
 #include "renderer/kernel/shading/shadingresult.h"
 #include "renderer/modeling/environmentedf/environmentedf.h"
 #include "renderer/modeling/environmentshader/environmentshader.h"
 #include "renderer/modeling/project/project.h"
+#include "renderer/modeling/scene/containers.h"
 #include "renderer/modeling/scene/scene.h"
+#include "renderer/utility/paramarray.h"
+
+// appleseed.foundation headers.
+#include "foundation/math/vector.h"
+#include "foundation/image/colorspace.h"
+#include "foundation/utility/containers/dictionary.h"
+#include "foundation/utility/containers/specializedarrays.h"
+
+// Standard headers.
+#include <string>
+
+// Forward declarations.
+namespace renderer  { class InputEvaluator; }
 
 using namespace foundation;
 using namespace std;
@@ -63,19 +78,20 @@ namespace
         {
         }
 
-        virtual void release()
+        virtual void release() override
         {
             delete this;
         }
 
-        virtual const char* get_model() const
+        virtual const char* get_model() const override
         {
             return Model;
         }
 
-        virtual void on_frame_begin(const Project& project)
+        virtual bool on_frame_begin(const Project& project) override
         {
-            EnvironmentShader::on_frame_begin(project);
+            if (!EnvironmentShader::on_frame_begin(project))
+                return false;
 
             m_env_edf = 0;
 
@@ -88,24 +104,27 @@ namespace
                 {
                     RENDERER_LOG_ERROR(
                         "while preparing environment shader \"%s\": "
-                        "cannot find environment EDF \"%s\", "
-                        "the environment will be transparent black.",
+                        "cannot find environment EDF \"%s\".",
                         get_name(),
                         m_env_edf_name.c_str());
+
+                    return false;
                 }
             }
+
+            return true;
         }
 
         virtual void evaluate(
             InputEvaluator&         input_evaluator,
             const Vector3d&         direction,
-            ShadingResult&          shading_result) const
+            ShadingResult&          shading_result) const override
         {
             if (m_env_edf)
             {
+                // Evaluate the environment EDF.
                 shading_result.m_color_space = ColorSpaceSpectral;
-                shading_result.m_alpha.set(1.0f);
-
+                shading_result.m_alpha.set(0.0f);
                 m_env_edf->evaluate(
                     input_evaluator,
                     direction,

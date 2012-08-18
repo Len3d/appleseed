@@ -38,6 +38,7 @@
 #include "foundation/image/colorspace.h"
 #include "foundation/image/tile.h"
 #include "foundation/platform/thread.h"
+#include "foundation/utility/containers/specializedarrays.h"
 #include "foundation/utility/searchpaths.h"
 
 using namespace boost;
@@ -53,6 +54,8 @@ namespace
     // 2D writable texture.
     //
 
+    const char* Model = "writable_texture_2d";
+
     class WritableTexture2d
       : public Texture
     {
@@ -66,23 +69,23 @@ namespace
         {
         }
 
-        virtual void release()
+        virtual void release() override
         {
             delete this;
         }
 
-        virtual const char* get_model() const
+        virtual const char* get_model() const override
         {
-            return WritableTexture2dFactory::get_model();
+            return Model;
         }
 
-        virtual ColorSpace get_color_space() const
+        virtual ColorSpace get_color_space() const override
         {
             throw ExceptionNotImplemented();
             return ColorSpaceLinearRGB;
         }
 
-        virtual const CanvasProperties& properties()
+        virtual const CanvasProperties& properties() override
         {
             mutex::scoped_lock lock(m_mutex);
 
@@ -96,20 +99,21 @@ namespace
         }
 
         virtual Tile* load_tile(
-            const size_t    tile_x,
-            const size_t    tile_y)
+            const size_t        tile_x,
+            const size_t        tile_y) override
         {
             mutex::scoped_lock lock(m_mutex);
 
             // todo: create a blank tile, or get the tile from the texture.
             throw ExceptionNotImplemented();
+
             return 0;
         }
 
         virtual void unload_tile(
-            const size_t    tile_x,
-            const size_t    tile_y,
-            Tile*           tile)
+            const size_t        tile_x,
+            const size_t        tile_y,
+            const Tile*         tile) override
         {
             mutex::scoped_lock lock(m_mutex);
 
@@ -136,9 +140,21 @@ namespace
 // WritableTexture2dFactory class implementation.
 //
 
-const char* WritableTexture2dFactory::get_model()
+const char* WritableTexture2dFactory::get_model() const
 {
-    return "writable_texture_2d";
+    return Model;
+}
+
+const char* WritableTexture2dFactory::get_human_readable_model() const
+{
+    return "Writable 2D Texture";
+}
+
+DictionaryArray WritableTexture2dFactory::get_widget_definitions() const
+{
+    DictionaryArray definitions;
+
+    return definitions;
 }
 
 auto_release_ptr<Texture> WritableTexture2dFactory::create(

@@ -30,20 +30,23 @@
 #define APPLESEED_RENDERER_MODELING_INPUT_TEXTURESOURCE_H
 
 // appleseed.renderer headers.
-#include "renderer/global/global.h"
+#include "renderer/global/globaltypes.h"
 #include "renderer/modeling/input/source.h"
-#include "renderer/modeling/scene/assembly.h"
-#include "renderer/modeling/scene/containers.h"
-#include "renderer/modeling/scene/scene.h"
-#include "renderer/modeling/scene/textureinstance.h"
 
 // appleseed.foundation headers.
 #include "foundation/image/canvasproperties.h"
+#include "foundation/image/color.h"
 #include "foundation/image/colorspace.h"
+#include "foundation/math/vector.h"
+#include "foundation/platform/compiler.h"
+#include "foundation/utility/uid.h"
+
+// Standard headers.
+#include <cstddef>
 
 // Forward declarations.
-namespace renderer      { class Texture; }
 namespace renderer      { class TextureCache; }
+namespace renderer      { class TextureInstance; }
 
 namespace renderer
 {
@@ -62,14 +65,26 @@ class TextureSource
         const TextureInstance&              texture_instance,
         const foundation::CanvasProperties& texture_props);
 
-    // A convenient function to retrieve the texture used by this source.
-    Texture& get_texture(const Scene& scene) const;
+    // Retrieve the texture instance used by this source.
+    const TextureInstance& get_texture_instance() const;
 
     // Evaluate the source at a given shading point.
     virtual void evaluate(
         TextureCache&                       texture_cache,
         const foundation::Vector2d&         uv,
         double&                             scalar) const override;
+    virtual void evaluate(
+        TextureCache&                       texture_cache,
+        const foundation::Vector2d&         uv,
+        foundation::Color3f&                linear_rgb) const override;
+    virtual void evaluate(
+        TextureCache&                       texture_cache,
+        const foundation::Vector2d&         uv,
+        Spectrum&                           spectrum) const override;
+    virtual void evaluate(
+        TextureCache&                       texture_cache,
+        const foundation::Vector2d&         uv,
+        Alpha&                              alpha) const override;
     virtual void evaluate(
         TextureCache&                       texture_cache,
         const foundation::Vector2d&         uv,
@@ -83,10 +98,8 @@ class TextureSource
 
   private:
     const foundation::UniqueID              m_assembly_uid;
-    const size_t                            m_texture_index;
-    const TextureAddressingMode             m_addressing_mode;
-    const TextureFilteringMode              m_filtering_mode;
-    const float                             m_multiplier;
+    const TextureInstance&                  m_texture_instance;
+    const foundation::UniqueID              m_texture_uid;
     const foundation::LightingConditions    m_lighting_conditions;
     const foundation::CanvasProperties      m_texture_props;
     const double                            m_scalar_canvas_width;
@@ -121,16 +134,9 @@ class TextureSource
 // TextureSource class implementation.
 //
 
-inline Texture& TextureSource::get_texture(const Scene& scene) const
+inline const TextureInstance& TextureSource::get_texture_instance() const
 {
-    const TextureContainer& textures =
-        m_assembly_uid == ~0
-            ? scene.textures()
-            : scene.assemblies().get_by_uid(m_assembly_uid)->textures();
-
-    assert(m_texture_index < textures.size());
-
-    return *textures.get_by_index(m_texture_index);
+    return m_texture_instance;
 }
 
 inline void TextureSource::evaluate(
@@ -140,7 +146,40 @@ inline void TextureSource::evaluate(
 {
     const foundation::Color4f color = sample_texture(texture_cache, uv);
 
-    scalar = static_cast<double>(color[0] * m_multiplier);
+    scalar = static_cast<double>(color[0]);
+}
+
+inline void TextureSource::evaluate(
+    TextureCache&                           texture_cache,
+    const foundation::Vector2d&             uv,
+    foundation::Color3f&                    linear_rgb) const
+{
+    const foundation::Color4f color = sample_texture(texture_cache, uv);
+
+    linear_rgb = color.rgb();
+}
+
+inline void TextureSource::evaluate(
+    TextureCache&                           texture_cache,
+    const foundation::Vector2d&             uv,
+    Spectrum&                               spectrum) const
+{
+    const foundation::Color4f color = sample_texture(texture_cache, uv);
+
+    foundation::linear_rgb_to_spectrum(
+        m_lighting_conditions,
+        color.rgb(),
+        spectrum);
+}
+
+inline void TextureSource::evaluate(
+    TextureCache&                           texture_cache,
+    const foundation::Vector2d&             uv,
+    Alpha&                                  alpha) const
+{
+    const foundation::Color4f color = sample_texture(texture_cache, uv);
+
+    alpha.set(color.a);
 }
 
 inline void TextureSource::evaluate(
@@ -152,7 +191,6 @@ inline void TextureSource::evaluate(
     const foundation::Color4f color = sample_texture(texture_cache, uv);
 
     linear_rgb = color.rgb();
-    linear_rgb *= m_multiplier;
 
     alpha.set(color.a);
 }
@@ -169,8 +207,6 @@ inline void TextureSource::evaluate(
         m_lighting_conditions,
         color.rgb(),
         spectrum);
-
-    spectrum *= m_multiplier;
 
     alpha.set(color.a);
 }

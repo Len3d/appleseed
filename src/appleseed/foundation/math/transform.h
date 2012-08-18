@@ -80,35 +80,25 @@ class Transform
     TransformType operator*(const TransformType& rhs) const;
 
     // Transform a 3D point.
-    template <typename U>
-    Vector<U, 3> transform_point_to_local(const Vector<U, 3>& p) const;
-    template <typename U>
-    Vector<U, 3> transform_point_to_parent(const Vector<U, 3>& p) const;
+    template <typename U> Vector<U, 3> point_to_local(const Vector<U, 3>& p) const;
+    template <typename U> Vector<U, 3> point_to_parent(const Vector<U, 3>& p) const;
 
     // Transform a 3D vector.
-    template <typename U>
-    Vector<U, 3> transform_vector_to_local(const Vector<U, 3>& v) const;
-    template <typename U>
-    Vector<U, 3> transform_vector_to_parent(const Vector<U, 3>& v) const;
+    template <typename U> Vector<U, 3> vector_to_local(const Vector<U, 3>& v) const;
+    template <typename U> Vector<U, 3> vector_to_parent(const Vector<U, 3>& v) const;
 
     // Transform a 3D normal.
-    template <typename U>
-    Vector<U, 3> transform_normal_to_local(const Vector<U, 3>& n) const;
-    template <typename U>
-    Vector<U, 3> transform_normal_to_parent(const Vector<U, 3>& n) const;
+    template <typename U> Vector<U, 3> normal_to_local(const Vector<U, 3>& n) const;
+    template <typename U> Vector<U, 3> normal_to_parent(const Vector<U, 3>& n) const;
 
     // Transform a 3D ray.
-    template <typename U>
-    Ray<U, 3> transform_to_local(const Ray<U, 3>& r) const;
-    template <typename U>
-    Ray<U, 3> transform_to_parent(const Ray<U, 3>& r) const;
+    template <typename U> Ray<U, 3> to_local(const Ray<U, 3>& r) const;
+    template <typename U> Ray<U, 3> to_parent(const Ray<U, 3>& r) const;
 
     // Transform a 3D axis-aligned bounding box.
     // If the bounding box is invalid, it is returned unmodified.
-    template <typename U>
-    AABB<U, 3> transform_to_local(const AABB<U, 3>& b) const;
-    template <typename U>
-    AABB<U, 3> transform_to_parent(const AABB<U, 3>& b) const;
+    template <typename U> AABB<U, 3> to_local(const AABB<U, 3>& b) const;
+    template <typename U> AABB<U, 3> to_parent(const AABB<U, 3>& b) const;
 
   private:
     MatrixType  m_local_to_parent;
@@ -152,7 +142,8 @@ class TransformInterpolator
         const TransformType& to);
 
     // Set the initial and final transformations.
-    void set_transforms(
+    // Returns true on success, false otherwise.
+    bool set_transforms(
         const TransformType& from,
         const TransformType& to);
 
@@ -195,7 +186,7 @@ inline Transform<T>::Transform(
   : m_local_to_parent(local_to_parent)
   , m_parent_to_local(parent_to_local)
 {
-    assert(feq(m_parent_to_local, inverse(m_local_to_parent), make_eps<T>(1.0e-6f, 1.0e-9)));
+    assert(feq(m_local_to_parent * m_parent_to_local, MatrixType::identity(), make_eps<T>(1.0e-6f, 1.0e-9)));
 }
 
 template <typename T>
@@ -226,7 +217,7 @@ inline Transform<T> Transform<T>::operator*(const TransformType& rhs) const
 
 template <typename T>
 template <typename U>
-inline Vector<U, 3> Transform<T>::transform_point_to_local(const Vector<U, 3>& p) const
+inline Vector<U, 3> Transform<T>::point_to_local(const Vector<U, 3>& p) const
 {
     Vector<U, 3> res;
 
@@ -261,7 +252,7 @@ inline Vector<U, 3> Transform<T>::transform_point_to_local(const Vector<U, 3>& p
 
 template <typename T>
 template <typename U>
-inline Vector<U, 3> Transform<T>::transform_point_to_parent(const Vector<U, 3>& p) const
+inline Vector<U, 3> Transform<T>::point_to_parent(const Vector<U, 3>& p) const
 {
     Vector<U, 3> res;
 
@@ -296,7 +287,7 @@ inline Vector<U, 3> Transform<T>::transform_point_to_parent(const Vector<U, 3>& 
 
 template <typename T>
 template <typename U>
-inline Vector<U, 3> Transform<T>::transform_vector_to_local(const Vector<U, 3>& v) const
+inline Vector<U, 3> Transform<T>::vector_to_local(const Vector<U, 3>& v) const
 {
     Vector<U, 3> res;
 
@@ -317,7 +308,7 @@ inline Vector<U, 3> Transform<T>::transform_vector_to_local(const Vector<U, 3>& 
 
 template <typename T>
 template <typename U>
-inline Vector<U, 3> Transform<T>::transform_vector_to_parent(const Vector<U, 3>& v) const
+inline Vector<U, 3> Transform<T>::vector_to_parent(const Vector<U, 3>& v) const
 {
     Vector<U, 3> res;
 
@@ -338,7 +329,7 @@ inline Vector<U, 3> Transform<T>::transform_vector_to_parent(const Vector<U, 3>&
 
 template <typename T>
 template <typename U>
-inline Vector<U, 3> Transform<T>::transform_normal_to_local(const Vector<U, 3>& n) const
+inline Vector<U, 3> Transform<T>::normal_to_local(const Vector<U, 3>& n) const
 {
     Vector<U, 3> res;
 
@@ -359,7 +350,7 @@ inline Vector<U, 3> Transform<T>::transform_normal_to_local(const Vector<U, 3>& 
 
 template <typename T>
 template <typename U>
-inline Vector<U, 3> Transform<T>::transform_normal_to_parent(const Vector<U, 3>& n) const
+inline Vector<U, 3> Transform<T>::normal_to_parent(const Vector<U, 3>& n) const
 {
     Vector<U, 3> res;
 
@@ -380,12 +371,12 @@ inline Vector<U, 3> Transform<T>::transform_normal_to_parent(const Vector<U, 3>&
 
 template <typename T>
 template <typename U>
-inline Ray<U, 3> Transform<T>::transform_to_local(const Ray<U, 3>& r) const
+inline Ray<U, 3> Transform<T>::to_local(const Ray<U, 3>& r) const
 {
     Ray<U, 3> res;
 
-    res.m_org = transform_point_to_local(r.m_org);
-    res.m_dir = transform_vector_to_local(r.m_dir);
+    res.m_org = point_to_local(r.m_org);
+    res.m_dir = vector_to_local(r.m_dir);
     res.m_tmin = r.m_tmin;
     res.m_tmax = r.m_tmax;
 
@@ -394,12 +385,12 @@ inline Ray<U, 3> Transform<T>::transform_to_local(const Ray<U, 3>& r) const
 
 template <typename T>
 template <typename U>
-inline Ray<U, 3> Transform<T>::transform_to_parent(const Ray<U, 3>& r) const
+inline Ray<U, 3> Transform<T>::to_parent(const Ray<U, 3>& r) const
 {
     Ray<U, 3> res;
 
-    res.m_org = transform_point_to_parent(r.m_org);
-    res.m_dir = transform_vector_to_parent(r.m_dir);
+    res.m_org = point_to_parent(r.m_org);
+    res.m_dir = vector_to_parent(r.m_dir);
     res.m_tmin = r.m_tmin;
     res.m_tmax = r.m_tmax;
 
@@ -408,7 +399,7 @@ inline Ray<U, 3> Transform<T>::transform_to_parent(const Ray<U, 3>& r) const
 
 template <typename T>
 template <typename U>
-inline AABB<U, 3> Transform<T>::transform_to_local(const AABB<U, 3>& b) const
+inline AABB<U, 3> Transform<T>::to_local(const AABB<U, 3>& b) const
 {
     //
     // Note: there are more efficient (although possibly less precise) ways
@@ -427,21 +418,21 @@ inline AABB<U, 3> Transform<T>::transform_to_local(const AABB<U, 3>& b) const
     AABB<U, 3> res;
     res.invalidate();
 
-    res.insert(transform_point_to_local(Vector<U, 3>(b[0][0], b[0][1], b[0][2])));
-    res.insert(transform_point_to_local(Vector<U, 3>(b[0][0], b[0][1], b[1][2])));
-    res.insert(transform_point_to_local(Vector<U, 3>(b[0][0], b[1][1], b[1][2])));
-    res.insert(transform_point_to_local(Vector<U, 3>(b[0][0], b[1][1], b[0][2])));
-    res.insert(transform_point_to_local(Vector<U, 3>(b[1][0], b[1][1], b[0][2])));
-    res.insert(transform_point_to_local(Vector<U, 3>(b[1][0], b[1][1], b[1][2])));
-    res.insert(transform_point_to_local(Vector<U, 3>(b[1][0], b[0][1], b[1][2])));
-    res.insert(transform_point_to_local(Vector<U, 3>(b[1][0], b[0][1], b[0][2])));
+    res.insert(point_to_local(Vector<U, 3>(b[0][0], b[0][1], b[0][2])));
+    res.insert(point_to_local(Vector<U, 3>(b[0][0], b[0][1], b[1][2])));
+    res.insert(point_to_local(Vector<U, 3>(b[0][0], b[1][1], b[1][2])));
+    res.insert(point_to_local(Vector<U, 3>(b[0][0], b[1][1], b[0][2])));
+    res.insert(point_to_local(Vector<U, 3>(b[1][0], b[1][1], b[0][2])));
+    res.insert(point_to_local(Vector<U, 3>(b[1][0], b[1][1], b[1][2])));
+    res.insert(point_to_local(Vector<U, 3>(b[1][0], b[0][1], b[1][2])));
+    res.insert(point_to_local(Vector<U, 3>(b[1][0], b[0][1], b[0][2])));
 
     return res;
 }
 
 template <typename T>
 template <typename U>
-inline AABB<U, 3> Transform<T>::transform_to_parent(const AABB<U, 3>& b) const
+inline AABB<U, 3> Transform<T>::to_parent(const AABB<U, 3>& b) const
 {
     if (!b.is_valid())
         return b;
@@ -449,14 +440,14 @@ inline AABB<U, 3> Transform<T>::transform_to_parent(const AABB<U, 3>& b) const
     AABB<U, 3> res;
     res.invalidate();
 
-    res.insert(transform_point_to_parent(Vector<U, 3>(b[0][0], b[0][1], b[0][2])));
-    res.insert(transform_point_to_parent(Vector<U, 3>(b[0][0], b[0][1], b[1][2])));
-    res.insert(transform_point_to_parent(Vector<U, 3>(b[0][0], b[1][1], b[1][2])));
-    res.insert(transform_point_to_parent(Vector<U, 3>(b[0][0], b[1][1], b[0][2])));
-    res.insert(transform_point_to_parent(Vector<U, 3>(b[1][0], b[1][1], b[0][2])));
-    res.insert(transform_point_to_parent(Vector<U, 3>(b[1][0], b[1][1], b[1][2])));
-    res.insert(transform_point_to_parent(Vector<U, 3>(b[1][0], b[0][1], b[1][2])));
-    res.insert(transform_point_to_parent(Vector<U, 3>(b[1][0], b[0][1], b[0][2])));
+    res.insert(point_to_parent(Vector<U, 3>(b[0][0], b[0][1], b[0][2])));
+    res.insert(point_to_parent(Vector<U, 3>(b[0][0], b[0][1], b[1][2])));
+    res.insert(point_to_parent(Vector<U, 3>(b[0][0], b[1][1], b[1][2])));
+    res.insert(point_to_parent(Vector<U, 3>(b[0][0], b[1][1], b[0][2])));
+    res.insert(point_to_parent(Vector<U, 3>(b[1][0], b[1][1], b[0][2])));
+    res.insert(point_to_parent(Vector<U, 3>(b[1][0], b[1][1], b[1][2])));
+    res.insert(point_to_parent(Vector<U, 3>(b[1][0], b[0][1], b[1][2])));
+    res.insert(point_to_parent(Vector<U, 3>(b[1][0], b[0][1], b[0][2])));
 
     return res;
 }
@@ -504,7 +495,7 @@ inline TransformInterpolator<T>::TransformInterpolator(
 }
 
 template <typename T>
-void TransformInterpolator<T>::set_transforms(
+bool TransformInterpolator<T>::set_transforms(
     const TransformType& from,
     const TransformType& to)
 {
@@ -519,6 +510,8 @@ void TransformInterpolator<T>::set_transforms(
 
     if (dot(m_q0, m_q1) < T(0.0))
         m_q1 = -m_q1;
+
+    return is_normalized(m_q0) && is_normalized(m_q1);
 }
 
 template <typename T>

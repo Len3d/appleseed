@@ -32,8 +32,8 @@
 // appleseed.renderer headers.
 #include "renderer/global/globallogger.h"
 #include "renderer/global/globaltypes.h"
-#include "renderer/modeling/bsdf/brdfwrapper.h"
 #include "renderer/modeling/bsdf/bsdf.h"
+#include "renderer/modeling/bsdf/btdfwrapper.h"
 #include "renderer/modeling/input/inputevaluator.h"
 #include "renderer/modeling/scene/assembly.h"
 
@@ -70,7 +70,7 @@ namespace
         BSDFMixImpl(
             const char*         name,
             const ParamArray&   params)
-          : BSDF(name, params)
+          : BSDF(name, Reflective, params)
         {
             m_inputs.declare("weight0", InputFormatScalar);
             m_inputs.declare("weight1", InputFormatScalar);
@@ -86,17 +86,20 @@ namespace
             return Model;
         }
 
-        virtual void on_frame_begin(
+        virtual bool on_frame_begin(
             const Project&      project,
             const Assembly&     assembly) override
         {
-            BSDF::on_frame_begin(project, assembly);
+            if (!BSDF::on_frame_begin(project, assembly))
+                return false;
 
             m_bsdf[0] = retrieve_bsdf(assembly, "bsdf0");
             m_bsdf[1] = retrieve_bsdf(assembly, "bsdf1");
 
             m_bsdf_data_offset[0] = get_inputs().compute_data_size();
             m_bsdf_data_offset[1] = m_bsdf_data_offset[0] + m_bsdf[0]->compute_input_data_size(assembly);
+
+            return true;
         }
 
         virtual size_t compute_input_data_size(
@@ -122,7 +125,7 @@ namespace
             m_bsdf[1]->evaluate_inputs(input_evaluator, uv, offset + m_bsdf_data_offset[1]);
         }
 
-        FORCE_INLINE virtual void sample(
+        FORCE_INLINE virtual Mode sample(
             SamplingContext&    sampling_context,
             const void*         data,
             const bool          adjoint,
@@ -132,8 +135,7 @@ namespace
             const Vector3d&     outgoing,
             Vector3d&           incoming,
             Spectrum&           value,
-            double&             probability,
-            Mode&               mode) const
+            double&             probability) const
         {
             // Retrieve the blending weights.
             const InputValues* values = static_cast<const InputValues*>(data);
@@ -142,10 +144,7 @@ namespace
             // Handle absorption.
             const double total_weight = w[0] + w[1];
             if (total_weight == 0.0)
-            {
-                mode = None;
-                return;
-            }
+                return Absorption;
 
             // Normalize the blending weights.
             const double rcp_total_weight = 1.0 / total_weight;
@@ -161,25 +160,20 @@ namespace
             // Sample this BSDF.
             Spectrum bsdf0_value;
             double bsdf0_prob;
-            Mode bsdf0_mode;
-            m_bsdf[bsdf0_index]->sample(
-                sampling_context,
-                get_bsdf_data(data, bsdf0_index),
-                adjoint,
-                false,          // do not multiply by |cos(incoming, normal)|
-                geometric_normal,
-                shading_basis,
-                outgoing,
-                incoming,
-                bsdf0_value,
-                bsdf0_prob,
-                bsdf0_mode);
-
-            if (bsdf0_mode == BSDF::None)
-            {
-                mode = BSDF::None;
-                return;
-            }
+            const Mode bsdf0_mode =
+                m_bsdf[bsdf0_index]->sample(
+                    sampling_context,
+                    get_bsdf_data(data, bsdf0_index),
+                    adjoint,
+                    false,      // do not multiply by |cos(incoming, normal)|
+                    geometric_normal,
+                    shading_basis,
+                    outgoing,
+                    incoming,
+                    bsdf0_value,
+                    bsdf0_prob);
+            if (bsdf0_mode == Absorption)
+                return Absorption;
 
             // Evaluate the other BSDF.
             Spectrum bsdf1_value;
@@ -192,26 +186,30 @@ namespace
                     shading_basis,
                     outgoing,
                     incoming,
+                    BSDF::AllScatteringModes,
                     bsdf1_value);
 
             // Blend BSDF values.
             value.set(0.0f);
-            if (bsdf0_prob > 0.0)
+            if (bsdf0_prob == BSDF::DiracDelta || bsdf0_prob > 0.0)
             {
                 bsdf0_value *= static_cast<float>(w[bsdf0_index]);
                 value += bsdf0_value;
             }
-            if (bsdf1_prob > 0.0)
+            if (bsdf1_prob == BSDF::DiracDelta || bsdf1_prob > 0.0)
             {
                 bsdf1_value *= static_cast<float>(w[bsdf1_index]);
                 value += bsdf1_value;
             }
 
             // Blend PDF values.
-            probability = bsdf0_prob * w[bsdf0_index] + bsdf1_prob * w[bsdf1_index];
+            probability =
+                bsdf0_prob == BSDF::DiracDelta
+                    ? BSDF::DiracDelta
+                    : bsdf0_prob * w[bsdf0_index] + bsdf1_prob * w[bsdf1_index];
 
-            // Set the scattering mode.
-            mode = bsdf0_mode;
+            // Return the scattering mode.
+            return bsdf0_mode;
         }
 
         FORCE_INLINE virtual double evaluate(
@@ -222,6 +220,7 @@ namespace
             const Basis3d&      shading_basis,
             const Vector3d&     outgoing,
             const Vector3d&     incoming,
+            const int           modes,
             Spectrum&           value) const
         {
             // Retrieve the blending weights.
@@ -250,6 +249,7 @@ namespace
                     shading_basis,
                     outgoing,
                     incoming,
+                    modes,
                     bsdf0_value);
 
             // Evaluate the second BSDF.
@@ -263,6 +263,7 @@ namespace
                     shading_basis,
                     outgoing,
                     incoming,
+                    modes,
                     bsdf1_value);
 
             // Blend BSDF values.
@@ -287,7 +288,8 @@ namespace
             const Vector3d&     geometric_normal,
             const Basis3d&      shading_basis,
             const Vector3d&     outgoing,
-            const Vector3d&     incoming) const
+            const Vector3d&     incoming,
+            const int           modes) const
         {
             // Retrieve the blending weights.
             const InputValues* values = static_cast<const InputValues*>(data);
@@ -306,7 +308,8 @@ namespace
                     geometric_normal,
                     shading_basis,
                     outgoing,
-                    incoming);
+                    incoming,
+                    modes);
 
             // Evaluate the PDF of the second BSDF.
             const double bsdf1_prob =
@@ -315,7 +318,8 @@ namespace
                     geometric_normal,
                     shading_basis,
                     outgoing,
-                    incoming);
+                    incoming,
+                    modes);
 
             // Blend PDF values.
             return (bsdf0_prob * w0 + bsdf1_prob * w1) / total_weight;
@@ -350,7 +354,7 @@ namespace
         }
     };
 
-    typedef BRDFWrapper<BSDFMixImpl> BSDFMix;
+    typedef BTDFWrapper<BSDFMixImpl> BSDFMix;
 }
 
 

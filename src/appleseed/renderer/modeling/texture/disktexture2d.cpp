@@ -30,16 +30,23 @@
 #include "disktexture2d.h"
 
 // appleseed.renderer headers.
+#include "renderer/global/globallogger.h"
 #include "renderer/modeling/texture/texture.h"
+#include "renderer/utility/paramarray.h"
 
 // appleseed.foundation headers.
 #include "foundation/image/canvasproperties.h"
 #include "foundation/image/colorspace.h"
 #include "foundation/image/genericprogressiveimagefilereader.h"
-#include "foundation/image/pixel.h"
 #include "foundation/image/tile.h"
 #include "foundation/platform/thread.h"
+#include "foundation/utility/containers/dictionary.h"
+#include "foundation/utility/containers/specializedarrays.h"
 #include "foundation/utility/searchpaths.h"
+
+// Standard headers.
+#include <cstddef>
+#include <string>
 
 using namespace boost;
 using namespace foundation;
@@ -53,6 +60,8 @@ namespace
     //
     // 2D disk texture.
     //
+
+    const char* Model = "disk_texture_2d";
 
     class DiskTexture2d
       : public Texture
@@ -68,22 +77,22 @@ namespace
             extract_parameters(search_paths);
         }
 
-        virtual void release()
+        virtual void release() override
         {
             delete this;
         }
 
-        virtual const char* get_model() const
+        virtual const char* get_model() const override
         {
-            return DiskTexture2dFactory::get_model();
+            return Model;
         }
 
-        virtual ColorSpace get_color_space() const
+        virtual ColorSpace get_color_space() const override
         {
             return m_color_space;
         }
 
-        virtual const CanvasProperties& properties()
+        virtual const CanvasProperties& properties() override
         {
             mutex::scoped_lock lock(m_mutex);
             open_image_file();
@@ -91,8 +100,8 @@ namespace
         }
 
         virtual Tile* load_tile(
-            const size_t    tile_x,
-            const size_t    tile_y)
+            const size_t        tile_x,
+            const size_t        tile_y) override
         {
             mutex::scoped_lock lock(m_mutex);
             open_image_file();
@@ -100,9 +109,9 @@ namespace
         }
 
         virtual void unload_tile(
-            const size_t    tile_x,
-            const size_t    tile_y,
-            Tile*           tile)
+            const size_t        tile_x,
+            const size_t        tile_y,
+            const Tile*         tile) override
         {
             delete tile;
         }
@@ -117,10 +126,8 @@ namespace
 
         void extract_parameters(const SearchPaths& search_paths)
         {
-            // Retrieve the texture filename.
-            const string filename = m_params.get_required<string>("filename", "");
-            m_filepath = search_paths.qualify(filename);
-            m_params.insert("filename", m_filepath);
+            // Establish and store the qualified path to the texture file.
+            m_filepath = search_paths.qualify(m_params.get_required<string>("filename", ""));
 
             // Retrieve the color space.
             const string color_space = m_params.get_required<string>("color_space", "linear_rgb");
@@ -161,9 +168,45 @@ namespace
 // DiskTexture2dFactory class implementation.
 //
 
-const char* DiskTexture2dFactory::get_model()
+const char* DiskTexture2dFactory::get_model() const
 {
-    return "disk_texture_2d";
+    return Model;
+}
+
+const char* DiskTexture2dFactory::get_human_readable_model() const
+{
+    return "2D Texture File";
+}
+
+DictionaryArray DiskTexture2dFactory::get_widget_definitions() const
+{
+    DictionaryArray definitions;
+
+    definitions.push_back(
+        Dictionary()
+            .insert("name", "filename")
+            .insert("label", "File Path")
+            .insert("widget", "file_picker")
+            .insert("file_picker_mode", "open")
+            .insert("file_picker_filter", "OpenEXR (*.exr);;PNG (*.png)")
+            .insert("default", "")
+            .insert("use", "required"));
+
+    definitions.push_back(
+        Dictionary()
+            .insert("name", "color_space")
+            .insert("label", "Color Space")
+            .insert("widget", "dropdown_list")
+            .insert("dropdown_items",
+                Dictionary()
+                    .insert("Linear RGB", "linear_rgb")
+                    .insert("sRGB", "srgb")
+                    .insert("CIE XYZ", "ciexyz")
+                    .insert("Spectral", "spectral"))
+            .insert("use", "required")
+            .insert("default", "srgb"));
+
+    return definitions;
 }
 
 auto_release_ptr<Texture> DiskTexture2dFactory::create(

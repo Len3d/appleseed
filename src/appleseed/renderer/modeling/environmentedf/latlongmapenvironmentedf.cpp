@@ -42,6 +42,7 @@
 #include "renderer/modeling/input/texturesource.h"
 #include "renderer/modeling/project/project.h"
 #include "renderer/modeling/scene/scene.h"
+#include "renderer/modeling/scene/textureinstance.h"
 #include "renderer/modeling/texture/texture.h"
 #include "renderer/utility/paramarray.h"
 
@@ -52,6 +53,7 @@
 #include "foundation/math/sampling.h"
 #include "foundation/math/scalar.h"
 #include "foundation/math/vector.h"
+#include "foundation/platform/compiler.h"
 #include "foundation/platform/types.h"
 #include "foundation/utility/containers/dictionary.h"
 
@@ -78,81 +80,71 @@ namespace
     //
     // Light probes:
     //
-    //   http://www.debevec.org/probes/
     //   http://gl.ict.usc.edu/Data/HighResProbes/
     //   http://www.cs.kuleuven.be/~graphics/index.php/environment-maps
     //
+
+    struct Payload
+    {
+        uint32      m_x;
+        Color3f     m_color;
+    };
+
+    typedef ImageImportanceSampler<Payload, double> ImageImportanceSamplerType;
 
     class ImageSampler
     {
       public:
         ImageSampler(
             TextureCache&   texture_cache,
-            Source*         source,
+            const Source*   exitance_source,
+            const Source*   multiplier_source,
             const size_t    width,
             const size_t    height,
             const double    u_shift,
             const double    v_shift)
           : m_texture_cache(texture_cache)
-          , m_source(source)
+          , m_exitance_source(exitance_source)
+          , m_multiplier_source(multiplier_source)
           , m_rcp_width(1.0 / width)
           , m_rcp_height(1.0 / height)
           , m_u_shift(u_shift)
           , m_v_shift(v_shift)
-          , m_out_of_range_luminance_error_count(0)
         {
         }
 
-        double operator()(const size_t x, const size_t y)
+        void sample(const size_t x, const size_t y, Payload& payload, double& importance)
         {
-            if (m_source == 0)
-                return 0.0;
+            payload.m_x = static_cast<uint32>(x);
+
+            if (m_exitance_source == 0)
+            {
+                payload.m_color.set(0.0f);
+                importance = 0.0;
+                return;
+            }
 
             const Vector2d uv(
-                x * m_rcp_width + m_u_shift,
-                1.0 - y * m_rcp_height + m_v_shift);
+                (x + 0.5) * m_rcp_width + m_u_shift,
+                1.0 - (y + 0.5) * m_rcp_height + m_v_shift);
 
-            Color3f linear_rgb;
-            Alpha alpha;
+            m_exitance_source->evaluate(m_texture_cache, uv, payload.m_color);
 
-            m_source->evaluate(
-                m_texture_cache,
-                uv,
-                linear_rgb,
-                alpha);
+            double multiplier;
+            m_multiplier_source->evaluate(m_texture_cache, uv, multiplier);
+            payload.m_color *= static_cast<float>(multiplier);
 
-            const double MaxLuminance = 1.0e4;
-
-            double lum = static_cast<double>(luminance(linear_rgb));
-
-            if (lum < 0.0)
-            {
-                lum = 0.0;
-                ++m_out_of_range_luminance_error_count;
-            }
-
-            if (lum > MaxLuminance)
-            {
-                lum = MaxLuminance;
-                ++m_out_of_range_luminance_error_count;
-            }
-
-            return lum;
-        }
-
-        size_t get_out_of_range_luminance_error_count() const
-        {
-            return m_out_of_range_luminance_error_count;
+            importance = static_cast<double>(luminance(payload.m_color));
         }
 
       private:
         TextureCache&   m_texture_cache;
-        Source*         m_source;
+        const Source*   m_exitance_source;
+        const Source*   m_multiplier_source;
         const double    m_rcp_width;
         const double    m_rcp_height;
         const double    m_u_shift;
         const double    m_v_shift;
-        size_t          m_out_of_range_luminance_error_count;
     };
 
     const char* Model = "latlong_map_environment_edf";
@@ -170,27 +162,33 @@ namespace
           , m_probability_scale(0.0)
         {
             m_inputs.declare("exitance", InputFormatSpectrum);
+            m_inputs.declare("exitance_multiplier", InputFormatScalar, "1.0");
 
             m_u_shift = m_params.get_optional<double>("horizontal_shift", 0.0) / 360.0;
             m_v_shift = m_params.get_optional<double>("vertical_shift", 0.0) / 360.0;
         }
 
-        virtual void release()
+        virtual void release() override
         {
             delete this;
         }
 
-        virtual const char* get_model() const
+        virtual const char* get_model() const override
         {
             return Model;
         }
 
-        virtual void on_frame_begin(const Project& project)
+        virtual bool on_frame_begin(const Project& project) override
         {
-            EnvironmentEDF::on_frame_begin(project);
+            if (!EnvironmentEDF::on_frame_begin(project))
+                return false;
+
+            check_exitance_input_non_null("exitance", "exitance_multiplier");
 
             if (m_importance_sampler.get() == 0)
                 build_importance_map(*project.get_scene());
+
+            return true;
         }
 
         virtual void sample(
@@ -198,32 +196,31 @@ namespace
             const Vector2d&     s,
             Vector3d&           outgoing,
             Spectrum&           value,
-            double&             probability) const
+            double&             probability) const override
         {
             // Sample the importance map.
-            size_t x, y;
+            Payload payload;
+            size_t y;
             double prob_xy;
-            m_importance_sampler->sample(s, x, y, prob_xy);
+            m_importance_sampler->sample(s, payload, y, prob_xy);
 
             // Compute the coordinates in [0,1]^2 of the sample.
-            const double u = (2.0 * x + 1.0) / (2.0 * m_importance_map_width);
-            const double v = (2.0 * y + 1.0) / (2.0 * m_importance_map_height);
-
-            double theta, phi;
-            unit_square_to_angles(u, v, theta, phi);
+            const double u = (payload.m_x + 0.5) * m_rcp_importance_map_width;
+            const double v = (y + 0.5) * m_rcp_importance_map_height;
 
             // Compute the world space emission direction.
+            double theta, phi;
+            unit_square_to_angles(u, v, theta, phi);
             outgoing = Vector3d::unit_vector(theta, phi);
 
-            lookup_environment_map(input_evaluator, u, v, value);
-
+            linear_rgb_to_spectrum(m_lighting_conditions, payload.m_color, value);
             probability = prob_xy * m_probability_scale / sin(theta);
         }
 
         virtual void evaluate(
             InputEvaluator&     input_evaluator,
             const Vector3d&     outgoing,
-            Spectrum&           value) const
+            Spectrum&           value) const override
         {
             assert(is_normalized(outgoing));
 
@@ -240,7 +237,7 @@ namespace
             InputEvaluator&     input_evaluator,
             const Vector3d&     outgoing,
             Spectrum&           value,
-            double&             probability) const
+            double&             probability) const override
         {
             assert(is_normalized(outgoing));
 
@@ -257,7 +254,7 @@ namespace
 
         virtual double evaluate_pdf(
             InputEvaluator&     input_evaluator,
-            const Vector3d&     outgoing) const
+            const Vector3d&     outgoing) const override
         {
             assert(is_normalized(outgoing));
 
@@ -275,16 +272,21 @@ namespace
         {
             Spectrum    m_exitance;
             Alpha       m_exitance_alpha;       // unused
+            double      m_exitance_multiplier;
         };
-
-        typedef ImageImportanceSampler<double> ImageImportanceSamplerType;
 
         double                                  m_u_shift;
         double                                  m_v_shift;
 
+        LightingConditions                      m_lighting_conditions;
+
         size_t                                  m_importance_map_width;
         size_t                                  m_importance_map_height;
+
+        double                                  m_rcp_importance_map_width;
+        double                                  m_rcp_importance_map_height;
         double                                  m_probability_scale;
+
         auto_ptr<ImageImportanceSamplerType>    m_importance_sampler;
 
         // Compute the spherical coordinates of a given direction.
@@ -333,20 +335,33 @@ namespace
 
         void build_importance_map(const Scene& scene)
         {
-            const TextureSource* exitance_source =
-                dynamic_cast<const TextureSource*>(m_inputs.source("exitance"));
+            const Source* exitance_source = m_inputs.source("exitance");
+            assert(exitance_source);
 
-            if (exitance_source)
+            if (dynamic_cast<const TextureSource*>(exitance_source))
             {
-                const CanvasProperties& texture_props = exitance_source->get_texture(scene).properties();
+                const TextureSource* texture_source = static_cast<const TextureSource*>(exitance_source);
+                const TextureInstance& texture_instance = texture_source->get_texture_instance();
+                const CanvasProperties& texture_props = texture_instance.get_texture()->properties();
+
+                m_lighting_conditions = texture_instance.get_lighting_conditions();
                 m_importance_map_width = texture_props.m_canvas_width;
                 m_importance_map_height = texture_props.m_canvas_height;
             }
             else
             {
+                RENDERER_LOG_ERROR(
+                    "while building importance map for environment edf \"%s\": a texture instance "
+                    "must be bound to the \"exitance\" input.",
+                    get_name());
+
+                m_lighting_conditions = LightingConditions(IlluminantCIED65, XYZCMFCIE196410Deg);
                 m_importance_map_width = 1;
                 m_importance_map_height = 1;
             }
+
+            m_rcp_importance_map_width = 1.0 / m_importance_map_width;
+            m_rcp_importance_map_height = 1.0 / m_importance_map_height;
 
             const size_t texel_count = m_importance_map_width * m_importance_map_height;
             m_probability_scale = texel_count / (2.0 * Pi * Pi);
@@ -355,7 +370,8 @@ namespace
             TextureCache texture_cache(texture_store);
             ImageSampler sampler(
                 texture_cache,
-                m_inputs.source("exitance"),
+                exitance_source,
+                m_inputs.source("exitance_multiplier"),
                 m_importance_map_width,
                 m_importance_map_height,
                 m_u_shift,
@@ -374,18 +390,6 @@ namespace
                     m_importance_map_height,
                     sampler));
 
-            const size_t oor_error_count = sampler.get_out_of_range_luminance_error_count();
-
-            if (oor_error_count > 0)
-            {
-                RENDERER_LOG_WARNING(
-                    "while building importance map for environment edf \"%s\": "
-                    "found %s pixel%s with out-of-range luminance; rendering artifacts are to be expected.",
-                    get_name(),
-                    pretty_uint(oor_error_count).c_str(),
-                    oor_error_count > 1 ? "s" : "");
-            }
-
             RENDERER_LOG_INFO(
                 "built importance map for environment edf \"%s\".",
                 get_name());
@@ -403,6 +407,7 @@ namespace
                 input_evaluator.evaluate<InputValues>(m_inputs, uv);
 
             value = values->m_exitance;
+            value *= static_cast<float>(values->m_exitance_multiplier);
         }
 
         double compute_pdf(
@@ -450,6 +455,16 @@ DictionaryArray LatLongMapEnvironmentEDFFactory::get_widget_definitions() const
                     .insert("texture_instance", "Textures"))
             .insert("use", "required")
             .insert("default", ""));
+
+    definitions.push_back(
+        Dictionary()
+            .insert("name", "exitance_multiplier")
+            .insert("label", "Exitance Multiplier")
+            .insert("widget", "entity_picker")
+            .insert("entity_types",
+                Dictionary().insert("texture_instance", "Textures"))
+            .insert("use", "optional")
+            .insert("default", "1.0"));
 
     definitions.push_back(
         Dictionary()

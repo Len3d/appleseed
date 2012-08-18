@@ -112,7 +112,8 @@ set (mainwindow_project_sources
     mainwindow/project/assemblyinstanceitem.h
     mainwindow/project/assemblyitem.cpp
     mainwindow/project/assemblyitem.h
-    mainwindow/project/cameraitem.h
+    mainwindow/project/basegroupitem.cpp
+    mainwindow/project/basegroupitem.h
     mainwindow/project/collectionitem.h
     mainwindow/project/collectionitembase.h
     mainwindow/project/entitybrowser.cpp
@@ -130,11 +131,9 @@ set (mainwindow_project_sources
     mainwindow/project/entityitem.h
     mainwindow/project/entityitembase.cpp
     mainwindow/project/entityitembase.h
-    mainwindow/project/environmentitem.h
     mainwindow/project/exceptioninvalidentityname.h
     mainwindow/project/itembase.cpp
     mainwindow/project/itembase.h
-    mainwindow/project/itemtypemap.h
     mainwindow/project/multimodelcollectionitem.h
     mainwindow/project/multimodelentityeditorformfactory.h
     mainwindow/project/multimodelentityitem.h
@@ -152,14 +151,16 @@ set (mainwindow_project_sources
     mainwindow/project/projectexplorer.h
     mainwindow/project/projectmanager.cpp
     mainwindow/project/projectmanager.h
-    mainwindow/project/projecttree.cpp
-    mainwindow/project/projecttree.h
+    mainwindow/project/sceneitem.cpp
+    mainwindow/project/sceneitem.h
     mainwindow/project/singlemodelcollectionitem.h
     mainwindow/project/singlemodelentityeditorformfactory.cpp
     mainwindow/project/singlemodelentityeditorformfactory.h
     mainwindow/project/singlemodelentityitem.h
     mainwindow/project/texturecollectionitem.cpp
     mainwindow/project/texturecollectionitem.h
+    mainwindow/project/textureitem.cpp
+    mainwindow/project/textureitem.h
     mainwindow/project/tools.cpp
     mainwindow/project/tools.h
 )
@@ -194,6 +195,9 @@ source_group ("mainwindow\\rendering" FILES
 )
 
 set (mainwindow_sources
+    mainwindow/configurationmanagerwindow.cpp
+    mainwindow/configurationmanagerwindow.h
+    mainwindow/configurationmanagerwindow.ui
     mainwindow/logwidget.cpp
     mainwindow/logwidget.h
     mainwindow/mainwindow.cpp
@@ -201,6 +205,9 @@ set (mainwindow_sources
     mainwindow/mainwindow.ui
     mainwindow/qtlogtarget.cpp
     mainwindow/qtlogtarget.h
+    mainwindow/rendersettingswindow.cpp
+    mainwindow/rendersettingswindow.h
+    mainwindow/rendersettingswindow.ui
     mainwindow/statusbar.cpp
     mainwindow/statusbar.h
 )
@@ -226,10 +233,16 @@ source_group ("meta\\tests" FILES
 set (utility_sources
     utility/chartwidget.cpp
     utility/chartwidget.h
+    utility/foldablepanelwidget.cpp
+    utility/foldablepanelwidget.h
+    utility/inputwidgetproxies.cpp
+    utility/inputwidgetproxies.h
     utility/interop.h
     utility/scrollareapanhandler.cpp
     utility/scrollareapanhandler.h
     utility/settingskeys.h
+    utility/treewidget.cpp
+    utility/treewidget.h
     utility/tweaks.cpp
     utility/tweaks.h
     utility/widgetzoomhandler.cpp
@@ -317,9 +330,9 @@ add_executable (appleseed.studio
 )
 
 set_target_properties (appleseed.studio PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../build/${platform}/appleseed.studio
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../build/${platform}/appleseed.studio
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../build/${platform}/appleseed.studio
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${platform}/appleseed.studio
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${platform}/appleseed.studio
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${platform}/appleseed.studio
 )
 
 if (WIN32)

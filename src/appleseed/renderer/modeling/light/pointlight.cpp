@@ -37,7 +37,12 @@
 #include "foundation/math/sampling.h"
 #include "foundation/math/scalar.h"
 #include "foundation/math/vector.h"
+#include "foundation/utility/containers/dictionary.h"
 #include "foundation/utility/containers/specializedarrays.h"
+
+// Forward declarations.
+namespace renderer  { class Assembly; }
+namespace renderer  { class Project; }
 
 using namespace foundation;
 
@@ -72,6 +77,18 @@ namespace
         virtual const char* get_model() const override
         {
             return Model;
+        }
+
+        virtual bool on_frame_begin(
+            const Project&      project,
+            const Assembly&     assembly) override
+        {
+            if (!Light::on_frame_begin(project, assembly))
+                return false;
+
+            check_exitance_input_non_null("exitance");
+
+            return true;
         }
 
         virtual void sample(
@@ -115,7 +132,7 @@ namespace
         struct InputValues
         {
             Spectrum    m_exitance;         // radiant exitance, in W.m^-2
-            Alpha       m_exitance_alpha;   // alpha channel of radiant exitance
+            Alpha       m_exitance_alpha;   // unused
         };
     };
 }

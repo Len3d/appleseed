@@ -50,15 +50,8 @@ namespace renderer
 
 void ShadingPoint::fetch_source_geometry() const
 {
-    assert(m_region_kit_cache);
-    assert(m_tess_cache);
-    assert(m_scene);
     assert(hit());
     assert(!(m_members & HasSourceGeometry));
-
-    // Retrieve the assembly instance.
-    m_assembly_instance = m_scene->assembly_instances().get_by_uid(m_asm_instance_uid);
-    assert(m_assembly_instance);
 
     // Retrieve the assembly.
     m_assembly = &m_assembly_instance->get_assembly();
@@ -71,6 +64,7 @@ void ShadingPoint::fetch_source_geometry() const
     m_object = &m_object_instance->get_object();
 
     // Retrieve the region kit of the object.
+    assert(m_region_kit_cache);
     const RegionKit& region_kit =
         *m_region_kit_cache->access(
             m_object->get_uid(), m_object->get_region_kit());
@@ -79,6 +73,7 @@ void ShadingPoint::fetch_source_geometry() const
     const IRegion* region = region_kit[m_region_index];
 
     // Retrieve the tessellation of the region.
+    assert(m_tess_cache);
     const StaticTriangleTess& tess =
         *m_tess_cache->access(
             region->get_uid(), region->get_static_triangle_tess());
@@ -91,10 +86,7 @@ void ShadingPoint::fetch_source_geometry() const
     m_triangle_pa = triangle.m_pa;
 
     // Copy the texture coordinates from UV set #0.
-    if (triangle.m_a0 != Triangle::None &&
-        triangle.m_a1 != Triangle::None &&
-        triangle.m_a2 != Triangle::None &&
-        tess.get_uv_vertex_count() > 0)
+    if (triangle.has_vertex_attributes() && tess.get_uv_vertex_count() > 0)
     {
         m_v0_uv = tess.get_uv_vertex(triangle.m_a0);
         m_v1_uv = tess.get_uv_vertex(triangle.m_a1);
@@ -167,8 +159,7 @@ void ShadingPoint::refine_and_offset() const
     cache_source_geometry();
 
     // Compute the location of the intersection point in assembly instance space.
-    ShadingRay::RayType local_ray =
-        m_assembly_instance->get_transform().transform_to_local(m_ray);
+    ShadingRay::RayType local_ray = m_assembly_instance_transform.to_local(m_ray);
     local_ray.m_org += local_ray.m_tmax * local_ray.m_dir;
 
     // Refine the location of the intersection point.
@@ -181,7 +172,7 @@ void ShadingPoint::refine_and_offset() const
     // Compute the geometric normal to the hit triangle in assembly instance space.
     // Note that it doesn't need to be normalized at this point.
     m_asm_geo_normal = Vector3d(cross(m_v1 - m_v0, m_v2 - m_v0));
-    m_asm_geo_normal = m_object_instance->get_transform().transform_normal_to_parent(m_asm_geo_normal);
+    m_asm_geo_normal = m_object_instance->get_transform().normal_to_parent(m_asm_geo_normal);
     m_asm_geo_normal = faceforward(m_asm_geo_normal, local_ray.m_dir);
 
     // Compute the offset points in assembly instance space.

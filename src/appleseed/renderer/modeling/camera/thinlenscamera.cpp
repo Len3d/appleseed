@@ -30,19 +30,36 @@
 #include "thinlenscamera.h"
 
 // appleseed.renderer headers.
+#include "renderer/global/globallogger.h"
+#include "renderer/global/globaltypes.h"
 #include "renderer/kernel/intersection/intersector.h"
 #include "renderer/kernel/shading/shadingpoint.h"
+#include "renderer/kernel/shading/shadingray.h"
 #include "renderer/kernel/texturing/texturecache.h"
 #include "renderer/kernel/texturing/texturestore.h"
 #include "renderer/modeling/camera/camera.h"
 #include "renderer/modeling/project/project.h"
+#include "renderer/utility/paramarray.h"
 #include "renderer/utility/transformsequence.h"
 
 // appleseed.foundation headers.
+#include "foundation/math/matrix.h"
 #include "foundation/math/sampling.h"
+#include "foundation/math/scalar.h"
 #include "foundation/math/transform.h"
+#include "foundation/math/vector.h"
+#include "foundation/platform/compiler.h"
+#include "foundation/platform/types.h"
+#include "foundation/utility/containers/dictionary.h"
 #include "foundation/utility/containers/specializedarrays.h"
+#include "foundation/utility/autoreleaseptr.h"
 #include "foundation/utility/string.h"
+
+// Standard headers.
+#include <cassert>
+#include <cstddef>
+#include <limits>
+#include <vector>
 
 using namespace foundation;
 using namespace std;
@@ -103,26 +120,27 @@ namespace
             }
         }
 
-        virtual void release()
+        virtual void release() override
         {
             delete this;
         }
 
-        virtual const char* get_model() const
+        virtual const char* get_model() const override
         {
             return Model;
         }
 
-        virtual void on_frame_begin(const Project& project)
+        virtual bool on_frame_begin(const Project& project) override
         {
-            Camera::on_frame_begin(project);
+            if (!Camera::on_frame_begin(project))
+                return false;
 
             // Perform autofocus, if enabled.
             if (m_autofocus_enabled)
             {
                 TextureStore texture_store(*project.get_scene());
                 TextureCache texture_cache(texture_store);
-                Intersector intersector(project.get_trace_context(), texture_cache, false);
+                Intersector intersector(project.get_trace_context(), texture_cache);
                 m_focal_distance = get_autofocus_focal_distance(intersector);
             }
 
@@ -130,19 +148,17 @@ namespace
             const double t = m_focal_distance / m_focal_length;
             m_kx = m_film_dimensions[0] * t;
             m_ky = m_film_dimensions[1] * t;
+
+            return true;
         }
 
         virtual void generate_ray(
             SamplingContext&        sampling_context,
             const Vector2d&         point,
-            ShadingRay&             ray) const
+            ShadingRay&             ray) const override
         {
             // Initialize the ray.
-            sampling_context.split_in_place(1, 1);
-            ray.m_time = sampling_context.next_double2();
-            ray.m_tmin = 0.0;
-            ray.m_tmax = numeric_limits<double>::max();
-            ray.m_flags = ~0;
+            initialize_ray(sampling_context, ray);
 
             // Sample the surface of the lens.
             Vector2d lens_point;
@@ -165,14 +181,7 @@ namespace
             }
 
             // Retrieve the camera transformation.
-            Transformd transform;
-            if (m_transform_sequence.size() > 1)
-            {
-                sampling_context.split_in_place(1, 1);
-                const double time = sampling_context.next_double2();
-                transform = m_transform_sequence.evaluate(time);
-            }
-            else transform = m_transform_sequence.evaluate(0.0);
+            const Transformd transform = m_transform_sequence.evaluate(ray.m_time);
 
             // Set the ray origin.
             const Transformd::MatrixType& mat = transform.get_local_to_parent();
@@ -202,10 +211,10 @@ namespace
             ray.m_dir = focus_point;
             ray.m_dir.x -= lens_point.x;
             ray.m_dir.y -= lens_point.y;
-            ray.m_dir = transform.transform_vector_to_parent(ray.m_dir);
+            ray.m_dir = transform.vector_to_parent(ray.m_dir);
         }
 
-        virtual Vector2d project(const Vector3d& point) const
+        virtual Vector2d project(const Vector3d& point) const override
         {
             const double k = -m_focal_length / point.z;
             const double x = 0.5 + (point.x * k * m_rcp_film_width);
@@ -259,15 +268,15 @@ namespace
 
         double get_autofocus_focal_distance(const Intersector& intersector) const
         {
-            // Create a ray.
+            // Create a ray. The autofocus considers the scene in the middle of the shutter interval.
             ShadingRay ray;
             ray.m_tmin = 0.0;
             ray.m_tmax = numeric_limits<double>::max();
-            ray.m_time = 0.0;
+            ray.m_time = get_shutter_middle_time();
             ray.m_flags = ~0;
 
             // Set the ray origin.
-            const Transformd transform = m_transform_sequence.evaluate(0.0);
+            const Transformd transform = m_transform_sequence.evaluate(ray.m_time);
             const Transformd::MatrixType& mat = transform.get_local_to_parent();
             ray.m_org.x = mat[ 3];
             ray.m_org.y = mat[ 7];
@@ -284,7 +293,7 @@ namespace
                 -m_focal_length);
 
             // Set the ray direction.
-            ray.m_dir = transform.transform_vector_to_parent(target);
+            ray.m_dir = transform.vector_to_parent(target);
 
             // Trace the ray.
             ShadingPoint shading_point;
@@ -295,14 +304,15 @@ namespace
                 // Hit: compute the focal distance.
                 const Vector3d v = shading_point.get_point() - ray.m_org;
                 const Vector3d camera_direction =
-                    transform.transform_vector_to_parent(Vector3d(0.0, 0.0, -1.0));
+                    transform.vector_to_parent(Vector3d(0.0, 0.0, -1.0));
                 const double af_focal_distance = dot(v, camera_direction);
 
                 RENDERER_LOG_INFO(
-                    "camera \"%s\": autofocus sets focal distance to %f %s (using camera position at time=0.0).",
+                    "camera \"%s\": autofocus sets focal distance to %f %s (using camera position at time=%.1f).",
                     get_name(),
                     af_focal_distance,
-                    plural(af_focal_distance, "meter").c_str());
+                    plural(af_focal_distance, "meter").c_str(),
+                    ray.m_time);
 
                 return af_focal_distance;
             }
@@ -310,8 +320,9 @@ namespace
             {
                 // No hit: focus at infinity.
                 RENDERER_LOG_INFO(
-                    "camera \"%s\": autofocus sets focal distance to infinity (using camera position at time=0.0).",
-                    get_name());
+                    "camera \"%s\": autofocus sets focal distance to infinity (using camera position at time=%.1f).",
+                    get_name(),
+                    ray.m_time);
 
                 return 1.0e38;
             }

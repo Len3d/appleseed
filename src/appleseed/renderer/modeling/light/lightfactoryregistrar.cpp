@@ -32,9 +32,15 @@
 // appleseed.renderer headers.
 #include "renderer/modeling/light/ilightfactory.h"
 #include "renderer/modeling/light/pointlight.h"
+#include "renderer/modeling/light/spotlight.h"
 
 // appleseed.foundation headers.
+#include "foundation/utility/foreach.h"
 #include "foundation/utility/registrar.h"
+
+// Standard headers.
+#include <cassert>
+#include <string>
 
 using namespace foundation;
 using namespace std;
@@ -53,6 +59,7 @@ LightFactoryRegistrar::LightFactoryRegistrar()
   : impl(new Impl())
 {
     register_factory(auto_ptr<FactoryType>(new PointLightFactory()));
+    register_factory(auto_ptr<FactoryType>(new SpotLightFactory()));
 }
 
 LightFactoryRegistrar::~LightFactoryRegistrar()

@@ -52,8 +52,9 @@
 #include <vector>
 
 // Forward declarations.
-namespace renderer  { class Assembly; }
-namespace renderer  { class ShadingPoint; }
+namespace foundation    { class Statistics; }
+namespace renderer      { class AssemblyInstance; }
+namespace renderer      { class ShadingPoint; }
 
 namespace renderer
 {
@@ -90,15 +91,15 @@ class AssemblyTree
     typedef std::vector<foundation::AABB3d> AABBVector;
     typedef std::map<foundation::UniqueID, foundation::VersionID> AssemblyVersionMap;
 
-    const Scene&                        m_scene;
-    RegionTreeContainer                 m_region_trees;
-    TriangleTreeContainer               m_triangle_trees;
-    std::vector<foundation::UniqueID>   m_assembly_instances;
-    AssemblyVersionMap                  m_assembly_versions;
+    const Scene&                            m_scene;
+    RegionTreeContainer                     m_region_trees;
+    TriangleTreeContainer                   m_triangle_trees;
+    std::vector<const AssemblyInstance*>    m_assembly_instances;
+    AssemblyVersionMap                      m_assembly_versions;
 
     void collect_assembly_instances(AABBVector& assembly_instance_bboxes);
     void rebuild_assembly_tree();
-    void store_assembly_instances_in_leaves();
+    void store_assembly_instances_in_leaves(foundation::Statistics& statistics);
     void update_child_trees();
 };
 

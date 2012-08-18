@@ -51,6 +51,7 @@
 #include "foundation/utility/job.h"
 #include "foundation/utility/maplefile.h"
 #include "foundation/utility/searchpaths.h"
+#include "foundation/utility/statistics.h"
 #include "foundation/utility/string.h"
 
 // Standard headers.
@@ -146,7 +147,8 @@ namespace
             m_abort_switch.abort();
 
             // Wait until the statistics printing thread is terminated.
-            m_statistics_thread->join();
+            if (m_statistics_thread.get())
+                m_statistics_thread->join();
 
             // Delete tile callbacks.
             for (const_each<TileCallbackVector> i = m_tile_callbacks; i; ++i)
@@ -165,6 +167,7 @@ namespace
         virtual void render()
         {
             start_rendering();
+
             m_job_queue.wait_until_completion();
         }
 
@@ -178,11 +181,11 @@ namespace
             m_sample_counter.clear();
 
             // Reset sample generators.
-            for (size_t i = 0; i < m_params.m_thread_count; ++i)
+            for (size_t i = 0; i < m_sample_generators.size(); ++i)
                 m_sample_generators[i]->reset();
 
             // Schedule the first batch of jobs.
-            for (size_t i = 0; i < m_params.m_thread_count; ++i)
+            for (size_t i = 0; i < m_sample_generators.size(); ++i)
             {
                 m_job_queue.schedule(
                     new SampleGeneratorJob(
@@ -193,7 +196,7 @@ namespace
                         m_tile_callbacks[i],
                         m_job_queue,
                         i,                              // job index
-                        m_params.m_thread_count,        // job count
+                        m_sample_generators.size(),     // job count
                         0,                              // pass number
                         m_abort_switch));
             }
@@ -216,24 +219,28 @@ namespace
 
         virtual void stop_rendering()
         {
+            // First, delete scheduled jobs to prevent worker threads from picking them up.
+            m_job_queue.clear_scheduled_jobs();
+
             // Tell rendering jobs and the statistics printing thread to stop.
             m_abort_switch.abort();
 
-            // Stop job execution.
-            m_job_manager->stop();
-
-            // Delete all non-executed jobs.
-            m_job_queue.clear_scheduled_jobs();
-
-            // Wait until the statistics printing thread is terminated.
+            // Wait until the statistics printing thread has stopped.
             m_statistics_thread->join();
+
+            // Wait until rendering jobs have effectively stopped.
+            m_job_queue.wait_until_completion();
         }
 
         virtual void terminate_rendering()
         {
             stop_rendering();
 
+            m_job_manager->stop();
+
             m_statistics_func->write_rms_deviation_file();
+
+            print_sample_generators_stats();
         }
 
         virtual bool is_rendering() const
@@ -417,6 +424,18 @@ namespace
 
         auto_ptr<StatisticsFunc>            m_statistics_func;
         auto_ptr<thread>                    m_statistics_thread;
+
+        void print_sample_generators_stats() const
+        {
+            assert(!m_sample_generators.empty());
+
+            StatisticsVector stats;
+
+            for (size_t i = 0; i < m_sample_generators.size(); ++i)
+                stats.merge(m_sample_generators[i]->get_statistics());
+
+            RENDERER_LOG_DEBUG("%s", stats.to_string().c_str());
+        }
     };
 }
 

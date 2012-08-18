@@ -32,7 +32,6 @@
 #--------------------------------------------------------------------------------------------------
 
 set (foundation_core_concepts_sources
-    foundation/core/concepts/icloneable.h
     foundation/core/concepts/iunknown.h
     foundation/core/concepts/noncopyable.h
     foundation/core/concepts/singleton.h
@@ -388,7 +387,6 @@ set (foundation_meta_tests_sources
     foundation/meta/tests/test_otherwise.cpp
     foundation/meta/tests/test_path.cpp
     foundation/meta/tests/test_permutation.cpp
-    foundation/meta/tests/test_pointcloudsampling.cpp
     foundation/meta/tests/test_poolallocator.cpp
     foundation/meta/tests/test_population.cpp
     foundation/meta/tests/test_preprocessor.cpp
@@ -410,6 +408,7 @@ set (foundation_meta_tests_sources
     foundation/meta/tests/test_tile.cpp
     foundation/meta/tests/test_timer.cpp
     foundation/meta/tests/test_transform.cpp
+    foundation/meta/tests/test_triangulator.cpp
     foundation/meta/tests/test_typetraits.cpp
     foundation/meta/tests/test_vector.cpp
     foundation/meta/tests/test_voxelgrid.cpp
@@ -639,6 +638,7 @@ set (foundation_utility_sources
     foundation/utility/countof.h
     foundation/utility/filter.h
     foundation/utility/foreach.h
+    foundation/utility/indenter.cpp
     foundation/utility/indenter.h
     foundation/utility/iostreamop.h
     foundation/utility/iterators.h
@@ -677,6 +677,7 @@ set (foundation_utility_sources
     foundation/utility/vpythonfile.h
     foundation/utility/xercesc.cpp
     foundation/utility/xercesc.h
+    foundation/utility/xmlelement.h
 )
 list (APPEND appleseed_sources
     ${foundation_utility_sources}
@@ -687,6 +688,7 @@ source_group ("foundation\\utility" FILES
 
 set (main_sources
     main/allocator.cpp
+    main/allocator.h
     main/dllmain.cpp
     main/dllsymbol.h
 )
@@ -741,10 +743,22 @@ source_group ("renderer\\global" FILES
     ${renderer_global_sources}
 )
 
+set (renderer_kernel_aov_sources
+    renderer/kernel/aov/imagestack.cpp
+    renderer/kernel/aov/imagestack.h
+    renderer/kernel/aov/spectrumstack.h
+    renderer/kernel/aov/tilestack.h
+)
+list (APPEND appleseed_sources
+    ${renderer_kernel_aov_sources}
+)
+source_group ("renderer\\kernel\\aov" FILES
+    ${renderer_kernel_aov_sources}
+)
+
 set (renderer_kernel_atomkraft_sources
     renderer/kernel/atomkraft/common.h
     renderer/kernel/atomkraft/ewa.h
-    renderer/kernel/atomkraft/mipmap.cpp
     renderer/kernel/atomkraft/mipmap.h
     renderer/kernel/atomkraft/textureobject.cpp
     renderer/kernel/atomkraft/textureobject.h
@@ -759,6 +773,8 @@ source_group ("renderer\\kernel\\atomkraft" FILES
 set (renderer_kernel_intersection_sources
     renderer/kernel/intersection/assemblytree.cpp
     renderer/kernel/intersection/assemblytree.h
+    renderer/kernel/intersection/intersectionfilter.cpp
+    renderer/kernel/intersection/intersectionfilter.h
     renderer/kernel/intersection/intersectionsettings.h
     renderer/kernel/intersection/intersector.cpp
     renderer/kernel/intersection/intersector.h
@@ -768,9 +784,14 @@ set (renderer_kernel_intersection_sources
     renderer/kernel/intersection/regiontree.h
     renderer/kernel/intersection/tracecontext.cpp
     renderer/kernel/intersection/tracecontext.h
+    renderer/kernel/intersection/triangleencoder.cpp
+    renderer/kernel/intersection/triangleencoder.h
+    renderer/kernel/intersection/triangleitemhandler.cpp
+    renderer/kernel/intersection/triangleitemhandler.h
     renderer/kernel/intersection/trianglekey.h
     renderer/kernel/intersection/triangletree.cpp
     renderer/kernel/intersection/triangletree.h
+    renderer/kernel/intersection/trianglevertexinfo.h
 )
 list (APPEND appleseed_sources
     ${renderer_kernel_intersection_sources}
@@ -780,8 +801,8 @@ source_group ("renderer\\kernel\\intersection" FILES
 )
 
 set (renderer_kernel_lighting_drt_sources
-    renderer/kernel/lighting/drt/drt.cpp
-    renderer/kernel/lighting/drt/drt.h
+    renderer/kernel/lighting/drt/drtlightingengine.cpp
+    renderer/kernel/lighting/drt/drtlightingengine.h
 )
 list (APPEND appleseed_sources
     ${renderer_kernel_lighting_drt_sources}
@@ -791,7 +812,7 @@ source_group ("renderer\\kernel\\lighting\\drt" FILES
 )
 
 set (renderer_kernel_lighting_null_sources
-    renderer/kernel/lighting/null/null.h
+    renderer/kernel/lighting/null/nulllightingengine.h
 )
 list (APPEND appleseed_sources
     ${renderer_kernel_lighting_null_sources}
@@ -800,20 +821,20 @@ source_group ("renderer\\kernel\\lighting\\null" FILES
     ${renderer_kernel_lighting_null_sources}
 )
 
-set (renderer_kernel_lighting_pathtracing_sources
-    renderer/kernel/lighting/pathtracing/pathtracing.cpp
-    renderer/kernel/lighting/pathtracing/pathtracing.h
+set (renderer_kernel_lighting_pt_sources
+    renderer/kernel/lighting/pt/ptlightingengine.cpp
+    renderer/kernel/lighting/pt/ptlightingengine.h
 )
 list (APPEND appleseed_sources
-    ${renderer_kernel_lighting_pathtracing_sources}
+    ${renderer_kernel_lighting_pt_sources}
 )
-source_group ("renderer\\kernel\\lighting\\pathtracing" FILES
-    ${renderer_kernel_lighting_pathtracing_sources}
+source_group ("renderer\\kernel\\lighting\\pt" FILES
+    ${renderer_kernel_lighting_pt_sources}
 )
 
 set (renderer_kernel_lighting_sources
-    renderer/kernel/lighting/directlighting.cpp
-    renderer/kernel/lighting/directlighting.h
+    renderer/kernel/lighting/directlightingintegrator.cpp
+    renderer/kernel/lighting/directlightingintegrator.h
     renderer/kernel/lighting/ilightingengine.h
     renderer/kernel/lighting/imagebasedlighting.cpp
     renderer/kernel/lighting/imagebasedlighting.h
@@ -919,7 +940,6 @@ set (renderer_kernel_rendering_sources
     renderer/kernel/rendering/sample.h
     renderer/kernel/rendering/samplegeneratorbase.cpp
     renderer/kernel/rendering/samplegeneratorbase.h
-    renderer/kernel/rendering/tilecallbackbase.cpp
     renderer/kernel/rendering/tilecallbackbase.h
 )
 list (APPEND appleseed_sources
@@ -988,6 +1008,7 @@ source_group ("renderer\\kernel\\volume" FILES
 
 set (renderer_meta_benchmarks_sources
     renderer/meta/benchmarks/benchmark_ewa.cpp
+    renderer/meta/benchmarks/benchmark_frame.cpp
     renderer/meta/benchmarks/benchmark_mipmap.cpp
 )
 list (APPEND appleseed_sources
@@ -1015,6 +1036,7 @@ set (renderer_meta_tests_sources
     renderer/meta/tests/test_pinholecamera.cpp
     renderer/meta/tests/test_pixelsampler.cpp
     renderer/meta/tests/test_projectfilereader.cpp
+    renderer/meta/tests/test_projectfilewriter.cpp
     renderer/meta/tests/test_samplecounter.cpp
     renderer/meta/tests/test_scene.cpp
     renderer/meta/tests/test_shadingresult.cpp
@@ -1029,19 +1051,6 @@ source_group ("renderer\\meta\\tests" FILES
     ${renderer_meta_tests_sources}
 )
 
-set (renderer_modeling_aov_sources
-    renderer/modeling/aov/aovcollection.cpp
-    renderer/modeling/aov/aovcollection.h
-    renderer/modeling/aov/aovimagecollection.cpp
-    renderer/modeling/aov/aovimagecollection.h
-)
-list (APPEND appleseed_sources
-    ${renderer_modeling_aov_sources}
-)
-source_group ("renderer\\modeling\\aov" FILES
-    ${renderer_modeling_aov_sources}
-)
-
 set (renderer_modeling_bsdf_sources
     renderer/modeling/bsdf/ashikhminbrdf.cpp
     renderer/modeling/bsdf/ashikhminbrdf.h
@@ -1054,6 +1063,8 @@ set (renderer_modeling_bsdf_sources
     renderer/modeling/bsdf/bsdfmix.h
     renderer/modeling/bsdf/bsdftraits.h
     renderer/modeling/bsdf/btdfwrapper.h
+    renderer/modeling/bsdf/diffusebtdf.cpp
+    renderer/modeling/bsdf/diffusebtdf.h
     renderer/modeling/bsdf/ibsdffactory.h
     renderer/modeling/bsdf/kelemenbrdf.cpp
     renderer/modeling/bsdf/kelemenbrdf.h
@@ -1237,6 +1248,8 @@ set (renderer_modeling_light_sources
     renderer/modeling/light/lighttraits.h
     renderer/modeling/light/pointlight.cpp
     renderer/modeling/light/pointlight.h
+    renderer/modeling/light/spotlight.cpp
+    renderer/modeling/light/spotlight.h
 )
 list (APPEND appleseed_sources
     ${renderer_modeling_light_sources}
@@ -1315,6 +1328,8 @@ set (renderer_modeling_scene_sources
     renderer/modeling/scene/assembly.h
     renderer/modeling/scene/assemblyinstance.cpp
     renderer/modeling/scene/assemblyinstance.h
+    renderer/modeling/scene/basegroup.cpp
+    renderer/modeling/scene/basegroup.h
     renderer/modeling/scene/containers.h
     renderer/modeling/scene/objectinstance.cpp
     renderer/modeling/scene/objectinstance.h
@@ -1368,6 +1383,7 @@ set (renderer_modeling_texture_sources
     renderer/modeling/texture/texture.h
     renderer/modeling/texture/texturefactoryregistrar.cpp
     renderer/modeling/texture/texturefactoryregistrar.h
+    renderer/modeling/texture/texturetraits.h
     renderer/modeling/texture/writabletexture2d.cpp
     renderer/modeling/texture/writabletexture2d.h
 )
@@ -1380,7 +1396,6 @@ source_group ("renderer\\modeling\\texture" FILES
 
 set (renderer_utility_sources
     renderer/utility/bbox.h
-    renderer/utility/cache.h
     renderer/utility/paramarray.cpp
     renderer/utility/paramarray.h
     renderer/utility/testutils.cpp
@@ -1417,9 +1432,9 @@ add_library (appleseed SHARED
 )
 
 set_target_properties (appleseed PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../build/${platform}/appleseed
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../build/${platform}/appleseed
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../build/${platform}/appleseed
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${platform}/appleseed
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${platform}/appleseed
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${platform}/appleseed
 )
 
 

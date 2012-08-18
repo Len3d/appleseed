@@ -67,7 +67,8 @@ int main(int argc, const char* argv[])
     // Construct the schema filename.
     const filesystem::path schema_path =
           filesystem::path(Application::get_root_path())
-        / "schemas/project.xsd";
+        / "schemas"
+        / "project.xsd";
 
     // Load the input project from disk.
     ProjectFileReader reader;
@@ -81,5 +82,5 @@ int main(int argc, const char* argv[])
         return 1;
 
     // Write the project back to disk.
-    return ProjectFileWriter::write(project.ref()) ? 0 : 1;
+    return ProjectFileWriter::write(project.ref(), project->get_path()) ? 0 : 1;
 }

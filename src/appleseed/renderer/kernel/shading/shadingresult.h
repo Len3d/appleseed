@@ -30,10 +30,12 @@
 #define APPLESEED_RENDERER_KERNEL_SHADING_SHADINGRESULT_H
 
 // appleseed.renderer headers.
-#include "renderer/global/global.h"
-#include "renderer/modeling/aov/aovcollection.h"
+#include "renderer/global/globaltypes.h"
+#include "renderer/kernel/aov/spectrumstack.h"
 
 // appleseed.foundation headers.
+#include "foundation/core/concepts/noncopyable.h"
+#include "foundation/image/color.h"
 #include "foundation/image/colorspace.h"
 
 namespace renderer
@@ -51,7 +53,7 @@ class ShadingResult
     foundation::ColorSpace  m_color_space;
     Spectrum                m_color;
     Alpha                   m_alpha;
-    AOVCollection           m_aovs;
+    SpectrumStack           m_aovs;
 
     // Set the shading result to transparent black in linear RGB.
     void clear();

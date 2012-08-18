@@ -54,6 +54,20 @@ endif ()
 
 project (appleseed)
 
+# Setup the path for our FindPackage modules.
+set( CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/cmake/Modules)
+
+#--------------------------------------------------------------------------------------------------
+# Build options.
+#--------------------------------------------------------------------------------------------------
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    option ( USE_STATIC_BOOST       "Use static boost libs"     ON)
+	option ( USE_EXTERNAL_PNG       "Use external Png lib"      OFF)
+	option ( USE_EXTERNAL_ALEMBIC   "Use external Alembic libs" OFF)
+	option ( USE_EXTERNAL_XERCES    "Use external Xerces lib"   OFF)
+	option ( WITH_PYTHON            "Build Python module"       ON)
+endif ()
 
 #--------------------------------------------------------------------------------------------------
 # Platform-specific settings.
@@ -84,35 +98,85 @@ exec_program (
     OUTPUT_VARIABLE git_tag
 )
 
-
 #--------------------------------------------------------------------------------------------------
 # Boost libraries.
 #--------------------------------------------------------------------------------------------------
 
 set (Boost_MULTITHREADED TRUE)
-set (Boost_USE_STATIC_LIBS TRUE)
+
+if (USE_STATIC_BOOST)
+    set (Boost_USE_STATIC_LIBS TRUE)
+endif ()
 
 find_package (Boost 1.46 REQUIRED date_time filesystem regex system thread)
+
+add_definitions (-DBOOST_FILESYSTEM_VERSION=3 -DBOOST_FILESYSTEM_NO_DEPRECATED)
 
 include_directories (${Boost_INCLUDE_DIRS})
 link_directories (${Boost_LIBRARY_DIRS})
 
+#--------------------------------------------------------------------------------------------------
+# Find external packages.
+#--------------------------------------------------------------------------------------------------
+
+if (USE_EXTERNAL_PNG)
+	find_package(PNG REQUIRED)
+	add_definitions(-DWITH_EXTERNAL_PNG)
+endif ()
+
+if (USE_EXTERNAL_ALEMBIC)
+	find_package(ZLIB REQUIRED)
+	find_package(Imath REQUIRED)
+	find_package(OpenEXR REQUIRED)
+	find_package(HDF5 REQUIRED COMPONENTS C HL)
+	find_package(Alembic REQUIRED)
+	add_definitions(-DWITH_EXTERNAL_ALEMBIC)
+endif ()
+
+if (USE_EXTERNAL_XERCES)
+	find_package(Xerces REQUIRED)
+	add_definitions(-DWITH_EXTERNAL_XERCES)
+endif ()
 
 #--------------------------------------------------------------------------------------------------
 # Include paths.
 #--------------------------------------------------------------------------------------------------
 
+# common includes
 include_directories (
-    alembic/lib
     appleseed
-    libpng
-    openexr/include
-    openexr/include/openexr
     STANN/include
-    xerces-c/src
-    zlib
+    ${PYTHON_INCLUDE_DIRS}
 )
 
+if (USE_EXTERNAL_PNG)
+    include_directories(${PNG_INCLUDE_DIR})
+else ()
+    include_directories(libpng)
+endif ()
+
+if (USE_EXTERNAL_ALEMBIC)
+    include_directories(
+        ${ZLIB_INCLUDE_DIRS}
+        ${OPENEXR_INCLUDE_DIR}
+        ${OPENEXR_INCLUDE_DIR}/OpenEXR/
+        ${HDF5_INCLUDE_DIRS}
+        ${ALEMBIC_INCLUDE_DIRS}
+    )
+else ()
+    include_directories(
+        alembic/lib
+        openexr/include
+        openexr/include/OpenEXR
+        zlib
+    )
+endif ()
+
+if (USE_EXTERNAL_XERCES)
+    include_directories(${XERCES_INCLUDE_DIRS})
+else ()
+    include_directories(xerces-c/src)
+endif ()
 
 #--------------------------------------------------------------------------------------------------
 # Preprocessor definitions.
@@ -307,3 +371,7 @@ add_subdirectory (appleseed.studio)
 add_subdirectory (tools/animatecamera)
 add_subdirectory (tools/maketiledexr)
 add_subdirectory (tools/normalizeprojectfile)
+
+if (WITH_PYTHON)
+    add_subdirectory (appleseed.py)
+endif ()

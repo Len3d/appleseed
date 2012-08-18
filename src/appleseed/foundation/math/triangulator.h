@@ -32,11 +32,19 @@
 // appleseed.foundation headers.
 #include "foundation/math/basis.h"
 #include "foundation/math/vector.h"
+#include "foundation/utility/memory.h"
+#include "foundation/utility/test.h"
+#include "foundation/utility/vpythonfile.h"
 
 // Standard headers.
 #include <cassert>
 #include <cstddef>
 #include <vector>
+
+DECLARE_TEST_CASE(Foundation_Math_Triangulator, ComputePolygonOrientation_GivenLowestLeftmostTriangleIsValid_ReturnsCorrectOrientation);
+DECLARE_TEST_CASE(Foundation_Math_Triangulator, ComputePolygonOrientation_GivenLowestLeftmostTriangleIsDegenerate_ReturnsCorrectOrientation);
+
+#undef FOUNDATION_TRIANGULATOR_DEBUG
 
 namespace foundation
 {
@@ -71,6 +79,15 @@ class Triangulator
     // Index array.
     typedef std::vector<size_t> IndexArray;
 
+    enum Options
+    {
+        Default                 = 0,        // none of the flags below
+        KeepDegenerateTriangles = 1 << 0    // insert degenerate triangles into triangulation
+    };
+
+    // Constructor.
+    explicit Triangulator(const int options = Default);
+
     // Triangulate a polygon.
     // Returns true if triangulation was successful, false otherwise.
     bool triangulate(
@@ -78,11 +95,14 @@ class Triangulator
         IndexArray&         triangles);
 
   private:
+    GRANT_ACCESS_TO_TEST_CASE(Foundation_Math_Triangulator, ComputePolygonOrientation_GivenLowestLeftmostTriangleIsValid_ReturnsCorrectOrientation);
+    GRANT_ACCESS_TO_TEST_CASE(Foundation_Math_Triangulator, ComputePolygonOrientation_GivenLowestLeftmostTriangleIsDegenerate_ReturnsCorrectOrientation);
+
     enum Orientation
     {
-        Degenerate = 0,     // degenerate polygon, no clear orientation
-        CCW,                // counterclockwise
-        CW                  // clockwise
+        Degenerate = 0,                     // degenerate polygon, no clear orientation
+        CCW,                                // counterclockwise orientation
+        CW                                  // clockwise orientation
     };
 
     struct Link
@@ -91,8 +111,9 @@ class Triangulator
         size_t  m_next;
     };
 
-    std::vector<Link>   m_links;
-    Polygon2            m_polygon2;
+    const int               m_options;
+    std::vector<Link>       m_links;
+    Polygon2                m_polygon2;
 
     // Compute the approximate normal of a 3D, nearly planar polygon.
     // The returned normal is not unit-length. It may also be a null
@@ -129,6 +150,13 @@ class Triangulator
         const size_t        prev,
         const size_t        curr,
         const size_t        next) const;
+
+    void debug(
+        const size_t        remaining_vertices,
+        const size_t        failed_iterations,
+        const size_t        prev,
+        const size_t        curr,
+        const size_t        next) const;
 };
 
 
@@ -136,11 +164,16 @@ class Triangulator
 // Triangulator class implementation.
 //
 
-// Triangulate a polygon.
+template <typename T>
+Triangulator<T>::Triangulator(const int options)
+  : m_options(options)
+{
+}
+
 template <typename T>
 bool Triangulator<T>::triangulate(
-    const Polygon3&     polygon,
-    IndexArray&         triangles)
+    const Polygon3&         polygon,
+    IndexArray&             triangles)
 {
     assert(polygon.size() >= 3);
 
@@ -203,6 +236,10 @@ bool Triangulator<T>::triangulate(
         const size_t prev = m_links[curr].m_prev;
         const size_t next = m_links[curr].m_next;
 
+#ifdef FOUNDATION_TRIANGULATOR_DEBUG
+        debug(remaining_vertices, failed_iterations, prev, curr, next);
+#endif
+
         // Fetch the vertices of the triangle (prev, curr, next).
         const Vector2Type& v0 = m_polygon2[prev];
         const Vector2Type& v1 = m_polygon2[curr];
@@ -213,58 +250,48 @@ bool Triangulator<T>::triangulate(
         const Vector2Type e1 = v2 - v0;
         const ValueType det = e0[0] * e1[1] - e1[0] * e0[1];
 
-        // Skip degenerate triangles.
         if (det == ValueType(0.0))
         {
-            // Remove the current vertex from the list.
-            m_links[prev].m_next = next;
-            m_links[next].m_prev = prev;
-            --remaining_vertices;
-
-            // Continue with the vertex curr + 2 to avoid creating high valence triangles.
-            curr = m_links[next].m_next;
-
-            // Reset the failed iteration counter.
-            failed_iterations = 0;
-
-            continue;
+            // Degenerate triangle.
+            if (m_options & KeepDegenerateTriangles)
+            {
+                triangles.push_back(prev);
+                triangles.push_back(curr);
+                triangles.push_back(next);
+            }
         }
-
-        // Test for convexity and earity.
-        if (det > ValueType(0.0) && is_ear(prev, curr, next))
+        else if (det > ValueType(0.0) && is_ear(prev, curr, next))
         {
-            // Create a new triangle.
+            // Ear.
             triangles.push_back(prev);
             triangles.push_back(curr);
             triangles.push_back(next);
+        }
+        else
+        {
+            // Not an ear: update the failed iteration counter and detect infinite loop.
+            if (++failed_iterations >= remaining_vertices)
+                return false;
 
-            // Remove the current vertex from the list.
-            m_links[prev].m_next = next;
-            m_links[next].m_prev = prev;
-            --remaining_vertices;
-
-            // Continue with the vertex curr + 2 to avoid creating high valence triangles.
-            curr = m_links[next].m_next;
-
-            // Reset the failed iteration counter.
-            failed_iterations = 0;
-
+            // Consider the next vertex.
+            curr = next;
             continue;
         }
 
-        // Update the failed iteration counter and detect infinite loop.
-        if (++failed_iterations >= remaining_vertices)
-            return false;
+        // Remove the current vertex from the list.
+        m_links[prev].m_next = next;
+        m_links[next].m_prev = prev;
+        --remaining_vertices;
 
-        // Consider the next vertex.
-        curr = next;
+        // Continue with the vertex curr + 2 to avoid creating high valence triangles.
+        curr = m_links[next].m_next;
+        failed_iterations = 0;
     }
 
     // Triangulation succeeded.
     return true;
 }
 
-// Compute the approximate normal of a 3D, nearly planar polygon.
 template <typename T>
 Vector<T, 3> Triangulator<T>::compute_polygon_normal(const Polygon3& polygon)
 {
@@ -300,11 +327,10 @@ Vector<T, 3> Triangulator<T>::compute_polygon_normal(const Polygon3& polygon)
     return normal;
 }
 
-// Project an approximately planar 3D polygon onto a plane.
 template <typename T>
 bool Triangulator<T>::project_polygon(
-    const Polygon3&     polygon3,
-    Polygon2&           polygon2)
+    const Polygon3&         polygon3,
+    Polygon2&               polygon2)
 {
     assert(polygon3.size() >= 3);
 
@@ -326,22 +352,18 @@ bool Triangulator<T>::project_polygon(
     const size_t n = polygon3.size();
     polygon2.reserve(n);
     for (size_t i = 0; i < n; ++i)
-    {
-        polygon2.push_back(
-            Vector2Type(dot(polygon3[i], u), dot(polygon3[i], v)));
-    }
+        polygon2.push_back(Vector2Type(dot(polygon3[i], u), dot(polygon3[i], v)));
 
     // Projection succeeded.
     return true;
 }
 
-// Compute the orientation of a 2D triangle.
 template <typename T>
 inline typename Triangulator<T>::Orientation
 Triangulator<T>::compute_triangle_orientation(
-    const Vector2Type&  v0,
-    const Vector2Type&  v1,
-    const Vector2Type&  v2)
+    const Vector2Type&      v0,
+    const Vector2Type&      v1,
+    const Vector2Type&      v2)
 {
     const Vector2Type e0 = v1 - v0;
     const Vector2Type e1 = v2 - v0;
@@ -352,48 +374,60 @@ Triangulator<T>::compute_triangle_orientation(
     else return det > ValueType(0.0) ? CCW : CW;
 }
 
-// Compute the orientation of a 2D polygon.
 template <typename T>
 typename Triangulator<T>::Orientation
-Triangulator<T>::compute_polygon_orientation(
-    const Polygon2&     polygon)
+Triangulator<T>::compute_polygon_orientation(const Polygon2& polygon)
 {
-    assert(polygon.size() >= 3);
-
-    // Find the rightmost, lowest vertex of the polygon.
-    size_t corner_index = 0;
-    Vector2Type corner_vertex = polygon[0];
     const size_t n = polygon.size();
+
+    assert(n >= 3);
+
+    // Find the lowest, leftmost vertex of the polygon.
+    size_t corner_index = 0;
     for (size_t i = 1; i < n; ++i)
     {
         const Vector2Type& v = polygon[i];
+        const Vector2Type& corner_vertex = polygon[corner_index];
+
         if ((v[1] <  corner_vertex[1]) ||
             (v[1] == corner_vertex[1] && v[0] < corner_vertex[0]))
         {
             // Found a better corner vertex.
             corner_index = i;
-            corner_vertex = v;
         }
     }
 
-    // Find the two neighbors of the corner vertex.
-    const size_t prev_index = corner_index > 0 ? corner_index - 1 : n - 1;
-    const size_t next_index = corner_index < n - 1 ? corner_index + 1 : 0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        // Find the two neighbors of the corner vertex.
+        const size_t prev_index = corner_index > 0 ? corner_index - 1 : n - 1;
+        const size_t next_index = corner_index < n - 1 ? corner_index + 1 : 0;
 
-    // Compute the orientation of the polygon.
-    return compute_triangle_orientation(
-        polygon[prev_index],
-        corner_vertex,
-        polygon[next_index]);
+        // Compute the orientation of this triangle.
+        const Orientation orientation =
+            compute_triangle_orientation(
+                polygon[prev_index],
+                polygon[corner_index],
+                polygon[next_index]);
+
+        // The first non-denegerate triangle determines the orientation of the polygon.
+        if (orientation != Degenerate)
+            return orientation;
+
+        // Consider the next vertex as the corner vertex.
+        corner_index = corner_index < n - 1 ? corner_index + 1 : 0;
+    }
+
+    // All triangles are degenerate thus the polygon is degenerate.
+    return Degenerate;
 }
 
-// Check whether a given point p is inside a given triangle (v0, v1, v2).
 template <typename T>
 inline bool Triangulator<T>::point_in_triangle(
-    const Vector2Type&  p,
-    const Vector2Type&  v0,
-    const Vector2Type&  v1,
-    const Vector2Type&  v2)
+    const Vector2Type&      p,
+    const Vector2Type&      v0,
+    const Vector2Type&      v1,
+    const Vector2Type&      v2)
 {
     assert(compute_triangle_orientation(v0, v1, v2) == CCW);
 
@@ -421,12 +455,11 @@ inline bool Triangulator<T>::point_in_triangle(
     return true;
 }
 
-// Check whether a given convex triangle is a valid ear.
 template <typename T>
 bool Triangulator<T>::is_ear(
-    const size_t        prev,
-    const size_t        curr,
-    const size_t        next) const
+    const size_t            prev,
+    const size_t            curr,
+    const size_t            next) const
 {
     // Fetch the vertices of the triangle (prev, curr, next).
     const Vector2Type& v0 = m_polygon2[prev];
@@ -437,15 +470,57 @@ bool Triangulator<T>::is_ear(
     // of the triangle (prev, curr, next) then this is not an ear. In practice,
     // it is equivalent and more efficient to check only the reflex vertices.
     // todo: check only the reflex vertices.
-    for (size_t i = m_links[curr].m_next; i != curr; i = m_links[i].m_next)
+    for (size_t i = m_links[next].m_next; i != prev; i = m_links[i].m_next)
     {
-        if (i == prev || i == next)
-            continue;
         if (point_in_triangle(m_polygon2[i], v0, v1, v2))
             return false;
     }
 
     return true;
+}
+
+template <typename T>
+void Triangulator<T>::debug(
+    const size_t            remaining_vertices,
+    const size_t            failed_iterations,
+    const size_t            prev,
+    const size_t            curr,
+    const size_t            next) const
+{
+    // Open a VPython file.
+    char filename[100];
+    std::sprintf(filename, "poly-remaining=%d-attempt=%d.py", remaining_vertices, failed_iterations + 1);
+    VPythonFile file(filename);
+
+    // Draw the remaining polygon.
+    std::vector<Vector3d> poly;
+    for (size_t i = 0, c = curr; i < remaining_vertices + 1; ++i, c = m_links[c].m_next)
+        poly.push_back(Vector3d(m_polygon2[c].x, m_polygon2[c].y, 0.0));
+    file.draw_polyline(poly.size(), &poly[0], "white", 0.0025);
+
+    // Fetch the vertices of the candidate ear.
+    const Vector2Type& v0 = m_polygon2[prev];
+    const Vector2Type& v1 = m_polygon2[curr];
+    const Vector2Type& v2 = m_polygon2[next];
+
+    // Compute the orientation of the candidate ear.
+    const Vector2Type e0 = v1 - v0;
+    const Vector2Type e1 = v2 - v0;
+    const ValueType det = e0[0] * e1[1] - e1[0] * e0[1];
+
+    // Determine if this triangle is effectively an ear.
+    const bool ear = det > ValueType(0.0) && is_ear(prev, curr, next);
+
+    // Draw the candidate ear.
+    poly.clear();
+    poly.push_back(Vector3d(v0.x, v0.y, 0.0));
+    poly.push_back(Vector3d(v1.x, v1.y, 0.0));
+    poly.push_back(Vector3d(v2.x, v2.y, 0.0));
+    poly.push_back(Vector3d(v0.x, v0.y, 0.0));
+    file.draw_polyline(poly.size(), &poly[0], ear ? "green" : "red", 0.0025);
+
+    // Highlight the tip of the candidate ear.
+    file.draw_point(Vector3d(v1.x, v1.y, 0.0), "yellow", 10);
 }
 
 }       // namespace foundation

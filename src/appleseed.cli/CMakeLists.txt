@@ -35,6 +35,8 @@ set (sources
     commandlinehandler.cpp
     commandlinehandler.h
     main.cpp
+    progresstilecallback.cpp
+    progresstilecallback.h
 )
 list (APPEND appleseed.cli_sources
     ${sources}
@@ -53,9 +55,9 @@ add_executable (appleseed.cli
 )
 
 set_target_properties (appleseed.cli PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../build/${platform}/appleseed.cli
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../build/${platform}/appleseed.cli
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../build/${platform}/appleseed.cli
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${platform}/appleseed.cli
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${platform}/appleseed.cli
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${platform}/appleseed.cli
 )
 
 

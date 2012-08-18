@@ -45,7 +45,7 @@ class NullBSDF
 {
   public:
     NullBSDF()
-      : BSDF("null_bsdf", ParamArray())
+      : BSDF("null_bsdf", Reflective, ParamArray())
     {
     }
 
@@ -59,7 +59,7 @@ class NullBSDF
         return "null_bsdf";
     }
 
-    virtual void sample(
+    virtual Mode sample(
         SamplingContext&                sampling_context,
         const void*                     data,
         const bool                      adjoint,
@@ -69,10 +69,9 @@ class NullBSDF
         const foundation::Vector3d&     outgoing,
         foundation::Vector3d&           incoming,
         Spectrum&                       value,
-        double&                         probability,
-        Mode&                           mode) const override
+        double&                         probability) const override
     {
-        mode = None;
+        return Absorption;
     }
 
     virtual double evaluate(
@@ -83,6 +82,7 @@ class NullBSDF
         const foundation::Basis3d&      shading_basis,
         const foundation::Vector3d&     outgoing,
         const foundation::Vector3d&     incoming,
+        const int                       modes,
         Spectrum&                       value) const override
     {
         return 0.0;
@@ -93,7 +93,8 @@ class NullBSDF
         const foundation::Vector3d&     geometric_normal,
         const foundation::Basis3d&      shading_basis,
         const foundation::Vector3d&     outgoing,
-        const foundation::Vector3d&     incoming) const override
+        const foundation::Vector3d&     incoming,
+        const int                       modes) const override
     {
         return 0.0;
     }

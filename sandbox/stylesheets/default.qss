@@ -35,7 +35,7 @@
 #define BORDER_COLOR                    rgb(40, 40, 40)
 #define BORDER_STYLE                    1px solid BORDER_COLOR
 
-#define INPUT_BACKGROUND_COLOR          rgb(45, 45, 45)
+#define INPUT_BACKGROUND_COLOR          rgb(43, 43, 43)
 #define DEFAULT_BACKGROUND_COLOR        rgb(50, 50, 50)
 #define ACTIVE_BACKGROUND_COLOR         rgb(60, 60, 60)
 #define HOVER_BACKGROUND_COLOR          rgb(190, 140, 50)
@@ -58,6 +58,11 @@ QWidget
     border: 0px;
     selection-color: SELECTED_TEXT_COLOR;
     selection-background-color: SELECTED_BACKGROUND_COLOR;
+}
+
+QWidget:disabled
+{
+    color: DISABLED_TEXT_COLOR;
 }
 
 
@@ -243,6 +248,11 @@ QAbstractScrollArea::corner
     background-color: transparent;
 }
 
+QAbstractScrollArea[hasFrame="true"]
+{
+    border: BORDER_STYLE;
+}
+
 
 /*
  * QMenuBar.
@@ -263,11 +273,6 @@ QMenuBar::item:selected
 {
     background-color: HOVER_BACKGROUND_COLOR;
     color: HOVER_TEXT_COLOR;
-}
-
-QMenuBar::item:disabled
-{
-    color: DISABLED_TEXT_COLOR;
 }
 
 
@@ -291,11 +296,6 @@ QMenu::item:selected
 {
     background-color: HOVER_BACKGROUND_COLOR;
     color: HOVER_TEXT_COLOR;
-}
-
-QMenu::item:disabled
-{
-    color: DISABLED_TEXT_COLOR;
 }
 
 QMenu::separator
@@ -498,11 +498,6 @@ QPushButton:pressed
     color: SELECTED_TEXT_COLOR;
 }
 
-QPushButton:disabled
-{
-    color: DISABLED_TEXT_COLOR;
-}
-
 
 /*
  * QHeaderView.
@@ -525,11 +520,6 @@ QHeaderView::section:only-one
 QHeaderView::section:hover
 {
     background-color: HOVER_BACKGROUND_COLOR;
-}
-
-QHeaderView::section:disabled
-{
-    color: DISABLED_TEXT_COLOR;
 }
 
 QHeaderView::up-arrow,
@@ -592,12 +582,6 @@ QListView::item:selected
     color: SELECTED_TEXT_COLOR;
 }
 
-QTreeView::item:disabled,
-QListView::item:disabled
-{
-    color: DISABLED_TEXT_COLOR;
-}
-
 #ifdef __APPLE__
 QTreeView::branch:selected
 {
@@ -644,53 +628,62 @@ QAbstractItemView::item
 /*
  * QCheckBox.
  * QAbstractItemView.
+ * QGroupBox.
  */
 
 QCheckBox::indicator,
-QAbstractItemView::indicator
+QAbstractItemView::indicator,
+QGroupBox::indicator
 {
     background-color: ACTIVE_BACKGROUND_COLOR;
 }
 
 QCheckBox::indicator:hover,
-QAbstractItemView::indicator:hover
+QAbstractItemView::indicator:hover,
+QGroupBox::indicator:hover
 {
     background-color: HOVER_BACKGROUND_COLOR;
     color: HOVER_TEXT_COLOR;
 }
 
 QCheckBox::indicator:checked:enabled,
-QAbstractItemView::indicator:checked:enabled
+QAbstractItemView::indicator:checked:enabled,
+QGroupBox::indicator:checked:enabled
 {
     image: url(":/widgets/checkbox_checked_enabled.png");
 }
 
 QCheckBox::indicator:unchecked:enabled,
-QAbstractItemView::indicator:unchecked:enabled
+QAbstractItemView::indicator:unchecked:enabled,
+QGroupBox::indicator:unchecked:enabled
 {
     image: url(":/widgets/checkbox_unchecked_enabled.png");
 }
 
 QCheckBox::indicator:indeterminate:enabled,
-QAbstractItemView::indicator:indeterminate:enabled
+QAbstractItemView::indicator:indeterminate:enabled,
+QGroupBox::indicator:indeterminate:enabled
 {
     image: url(":/widgets/checkbox_indeterminate_enabled.png");
 }
 
 QCheckBox::indicator:checked:disabled,
-QAbstractItemView::indicator:checked:disabled
+QAbstractItemView::indicator:checked:disabled,
+QGroupBox::indicator:checked:disabled
 {
     image: url(":/widgets/checkbox_checked_disabled.png");
 }
 
 QCheckBox::indicator:unchecked:disabled,
-QAbstractItemView::indicator:unchecked:disabled
+QAbstractItemView::indicator:unchecked:disabled,
+QGroupBox::indicator:unchecked:disabled
 {
     image: url(":/widgets/checkbox_unchecked_disabled.png");
 }
 
 QCheckBox::indicator:indeterminate:disabled,
-QAbstractItemView::indicator:indeterminate:disabled
+QAbstractItemView::indicator:indeterminate:disabled,
+QGroupBox::indicator:indeterminate:disabled
 {
     image: url(":/widgets/checkbox_indeterminate_disabled.png");
 }
@@ -698,9 +691,13 @@ QAbstractItemView::indicator:indeterminate:disabled
 
 /*
  * QLineEdit.
+ * QAbstractSpinBox.
+ * QComboBox.
  */
  
-QLineEdit
+QLineEdit,
+QAbstractSpinBox,
+QComboBox
 {
     border: BORDER_STYLE;
     background-color: INPUT_BACKGROUND_COLOR;
@@ -729,14 +726,33 @@ QFrame[hasFrame="true"]
 
 
 /*
+ * QGroupBox.
+ */
+
+QGroupBox
+{
+    border: BORDER_STYLE;
+    padding-top: 8px;
+    margin-top: 10px;
+}
+
+QGroupBox::title
+{
+    top: -7px;
+    left: 8px;
+    padding-left: 3px;
+    padding-right: 3px;
+}
+
+
+/*
  * QComboBox.
  */
 
 QComboBox
 {
-    border: BORDER_STYLE;
-    background-color: INPUT_BACKGROUND_COLOR;
-    padding: 0px 4px 0px 4px;
+    padding-left: 4px;
+    padding-right: 4px;
 }
 
 QComboBox::drop-down
@@ -749,9 +765,14 @@ QComboBox::drop-down:hover
     background-color: HOVER_BACKGROUND_COLOR;
 }
 
-QComboBox::down-arrow
+QComboBox::down-arrow:enabled
 {
-    image: url(":/widgets/combobox_arrow_down.png");
+    image: url(":/widgets/combobox_arrow_down_enabled.png");
+}
+
+QComboBox::down-arrow:disabled
+{
+    image: url(":/widgets/combobox_arrow_down_disabled.png");
 }
 
 QComboBox::down-arrow:hover
@@ -768,57 +789,86 @@ QComboBox QAbstractItemView
 
 
 /*
- * QSpinBox.
+ * QAbstractSpinBox.
  */
 
-QSpinBox
-{
-    border: BORDER_STYLE;
-}
-
-QSpinBox::up-button,
-QSpinBox::down-button
+QAbstractSpinBox::up-button,
+QAbstractSpinBox::down-button
 {
     background-color: ACTIVE_BACKGROUND_COLOR;
     border-left: BORDER_STYLE;
 }
 
-QSpinBox::up-button
+QAbstractSpinBox::up-button
 {
     border-bottom: BORDER_STYLE;
 }
 
-QSpinBox::down-button
+QAbstractSpinBox::down-button
 {
     border-top: BORDER_STYLE;
 }
 
-QSpinBox::up-button:hover,
-QSpinBox::down-button:hover
+QAbstractSpinBox::up-button:hover,
+QAbstractSpinBox::down-button:hover
 {
     background-color: HOVER_BACKGROUND_COLOR;
     color: HOVER_TEXT_COLOR;
 }
 
-QSpinBox::up-button:pressed,
-QSpinBox::down-button:pressed
+QAbstractSpinBox::up-button:pressed,
+QAbstractSpinBox::down-button:pressed
 {
     background-color: SELECTED_BACKGROUND_COLOR;
     color: SELECTED_TEXT_COLOR;
 }
 
-QSpinBox::up-button:disabled,
-QSpinBox::down-button:disabled
-{
-    color: DISABLED_TEXT_COLOR;
-}
-
-QSpinBox::up-arrow
+QAbstractSpinBox::up-arrow:enabled
 {
     image: url(":/widgets/spinbox_arrow_up_enabled.png");
 }
 
-QSpinBox::down-arrow
+QAbstractSpinBox::up-arrow:disabled
+{
+    image: url(":/widgets/spinbox_arrow_up_disabled.png");
+}
+
+QAbstractSpinBox::down-arrow:enabled
 {
     image: url(":/widgets/spinbox_arrow_down_enabled.png");
+}
+
+QAbstractSpinBox::down-arrow:disabled
+{
+    image: url(":/widgets/spinbox_arrow_down_disabled.png");
+}
+
+
+/*
+ * appleseed::studio::FoldablePanelWidget.
+ */
+
+appleseed--studio--FoldablePanelWidget > QPushButton
+{
+    border-radius: 0px;
+}
+
+appleseed--studio--FoldablePanelWidget > QFrame[hasFrame="true"]
+{
+    border-top: 0px;
+}
+
+
+/*
+ * Specific styles.
+ */
+
+QWidget#RenderSettingsWindow QWidget#scrollarea
+{
+    background-color: INPUT_BACKGROUND_COLOR;
+}
+
+QWidget#RenderSettingsWindow QWidget#scrollareawidget
+{
+    background-color: transparent;
 }

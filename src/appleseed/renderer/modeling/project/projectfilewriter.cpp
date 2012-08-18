@@ -62,7 +62,9 @@
 #include "foundation/utility/containers/specializedarrays.h"
 #include "foundation/utility/foreach.h"
 #include "foundation/utility/indenter.h"
+#include "foundation/utility/searchpaths.h"
 #include "foundation/utility/string.h"
+#include "foundation/utility/xmlelement.h"
 
 // boost headers.
 #include "boost/filesystem/operations.hpp"
@@ -74,8 +76,6 @@
 #include <exception>
 #include <map>
 #include <set>
-#include <utility>
-#include <vector>
 
 using namespace boost;
 using namespace foundation;
@@ -90,92 +90,8 @@ namespace renderer
 
 namespace
 {
-    //
-    // A class representing a XML element.
-    //
-
-    class Element
-    {
-      public:
-        // Constructor, opens the element.
-        Element(
-            const string&   name,
-            FILE*           file,
-            Indenter&       indenter)
-          : m_name(name)
-          , m_file(file)
-          , m_indenter(indenter)
-          , m_opened(false)
-          , m_closed(false)
-        {
-        }
-
-        // Destructor, closes the element.
-        ~Element()
-        {
-            assert(m_opened);
-
-            if (!m_closed)
-            {
-                --m_indenter;
-                fprintf(m_file, "%s</%s>\n", m_indenter.c_str(), m_name.c_str());
-            }
-        }
-
-        // Append an attribute to the element.
-        template <typename T>
-        void add_attribute(
-            const string&   name,
-            const T&        value)
-        {
-            assert(!m_opened);
-            m_attributes.push_back(make_pair(name, to_string(value)));
-        }
-
-        // Write the element.
-        void write(const bool has_content)
-        {
-            assert(!m_opened);
-
-            fprintf(m_file, "%s<%s", m_indenter.c_str(), m_name.c_str());
-
-            for (const_each<AttributeVector> i = m_attributes; i; ++i)
-            {
-                const string attribute_value = replace_special_xml_characters(i->second);
-                fprintf(m_file, " %s=\"%s\"", i->first.c_str(), attribute_value.c_str());
-            }
-
-            if (has_content)
-            {
-                fprintf(m_file, ">\n");
-                ++m_indenter;
-                m_closed = false;
-            }
-            else
-            {
-                fprintf(m_file, " />\n");
-                m_closed = true;
-            }
-
-            m_opened = true;
-        }
-
-      private:
-        typedef pair<string, string> Attribute;
-        typedef vector<Attribute> AttributeVector;
-
-        const string        m_name;
-        FILE*               m_file;
-        Indenter&           m_indenter;
-        AttributeVector     m_attributes;
-        bool                m_opened;
-        bool                m_closed;
-    };
-
-
-    //
-    // The actual project writer.
-    //
+    // Revision number of the project file format.
+    const size_t ProjectFileFormatRevision = 2;
 
     // Floating-point formatting settings.
     const char* VectorFormat     = "%.15f";
@@ -188,16 +104,17 @@ namespace
         // Constructor.
         Writer(
             const Project&                      project,
+            const char*                         filepath,
             FILE*                               file,
             const ProjectFileWriter::Options    options)
-          : m_options(options)
+          : m_project_search_paths(project.get_search_paths())
+          , m_project_old_root_path(filesystem::path(project.get_path()).parent_path())
+          , m_project_new_root_path(filesystem::path(filepath).parent_path())
           , m_file(file)
+          , m_options(options)
           , m_indenter(4)
         {
             assert(m_file);
-
-            // Extract the root path of the project.
-            m_project_root_path = filesystem::path(project.get_path()).parent_path();
 
             // Write the file header.
             fprintf(m_file, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -212,32 +129,97 @@ namespace
             }
 
             // Write the project.
-            write(project);
+            write_project(project);
         }
 
       private:
-        const ProjectFileWriter::Options        m_options;
+        const SearchPaths&                      m_project_search_paths;
+        const filesystem::path                  m_project_old_root_path;
+        const filesystem::path                  m_project_new_root_path;
         FILE*                                   m_file;
+        const ProjectFileWriter::Options        m_options;
         Indenter                                m_indenter;
-        filesystem::path                        m_project_root_path;
 
-        static void copy_file_if_not_exists(
+        static bool copy_file_if_not_exists(
             const filesystem::path& source_path,
             const filesystem::path& dest_path)
         {
-            if (!filesystem::exists(dest_path))
+            if (filesystem::exists(dest_path))
+                return false;
+
+            try
             {
-                try
+                filesystem::create_directories(dest_path.parent_path());
+                filesystem::copy_file(source_path, dest_path);
+                return true;
+            }
+            catch (const std::exception& e)
+            {
+                RENDERER_LOG_ERROR(
+                    "failed to copy %s to %s: %s.",
+                    source_path.string().c_str(),
+                    dest_path.string().c_str(),
+                    e.what());
+            }
+
+            return false;
+        }
+
+        //
+        //  Project Directory   Old Parameter Value         Target Directory    Copy Assets?    New Parameter Value                 Changes
+        //  -------------------------------------------------------------------------------------------------------------------------------------
+        //
+        //  c:\appleseed        bunny.exr                   c:\appleseed        yes             bunny.exr                           none
+        //  c:\appleseed        textures/bunny.exr          c:\appleseed        yes             textures/bunny.exr                  none
+        //  c:\appleseed        c:\textures\bunny.exr       c:\appleseed        yes             bunny.exr                           copy, param
+        //
+        //  c:\appleseed        bunny.exr                   c:\temp             yes             bunny.exr                           copy
+        //  c:\appleseed        textures/bunny.exr          c:\temp             yes             textures/bunny.exr                  copy
+        //  c:\appleseed        c:\textures\bunny.exr       c:\temp             yes             bunny.exr                           copy, param
+        //
+        //  c:\appleseed        bunny.exr                   c:\appleseed        no              bunny.exr                           none
+        //  c:\appleseed        textures/bunny.exr          c:\appleseed        no              textures/bunny.exr                  none
+        //  c:\appleseed        c:\textures\bunny.exr       c:\appleseed        no              c:\textures\bunny.exr               none
+        //  
+        //  c:\appleseed        bunny.exr                   c:\temp             no              c:\appleseed\bunny.exr              param
+        //  c:\appleseed        textures/bunny.exr          c:\temp             no              c:\appleseed\textures\bunny.exr     param
+        //  c:\appleseed        c:\textures\bunny.exr       c:\temp             no              c:\textures\bunny.exr               none
+        //
+
+        void handle_link_to_asset(Dictionary& params, const char* param_name) const
+        {
+            const filesystem::path original_filepath = params.get<string>(param_name);
+            const filesystem::path qualified_filepath = m_project_search_paths.qualify(original_filepath.string());
+
+            if (m_options & ProjectFileWriter::OmitCopyingAssets)
+            {
+                if (m_project_old_root_path == m_project_new_root_path)
+                    return;
+
+                if (original_filepath.is_absolute())
+                    return;
+
+                const filesystem::path new_filepath = absolute(qualified_filepath, m_project_old_root_path);
+
+                params.insert(param_name, new_filepath.string());
+            }
+            else
+            {
+                if (original_filepath.is_absolute())
                 {
-                    filesystem::copy_file(source_path, dest_path);
+                    const filesystem::path filename = original_filepath.filename();
+
+                    copy_file_if_not_exists(
+                        qualified_filepath,
+                        m_project_new_root_path / filename);
+
+                    params.insert(param_name, filename.string());
                 }
-                catch (const std::exception& e)
+                else
                 {
-                    RENDERER_LOG_ERROR(
-                        "failed to copy %s to %s: %s.",
-                        source_path.string().c_str(),
-                        dest_path.string().c_str(),
-                        e.what());
+                    copy_file_if_not_exists(
+                        qualified_filepath,
+                        m_project_new_root_path / original_filepath);
                 }
             }
         }
@@ -268,33 +250,19 @@ namespace
         }
 
         // Write a (possibly hierarchical) set of parameters.
-        void write(const Dictionary& params)
+        void write_params(const Dictionary& params)
         {
-            for (const_each<StringDictionary> i = params.strings(); i; ++i)
-            {
-                Element element("parameter", m_file, m_indenter);
-                element.add_attribute("name", i->name());
-                element.add_attribute("value", i->value<string>());
-                element.write(false);
-            }
-
-            for (const_each<DictionaryDictionary> i = params.dictionaries(); i; ++i)
-            {
-                Element element("parameters", m_file, m_indenter);
-                element.add_attribute("name", i->name());
-                element.write(true);
-                write(i->value());
-            }
+            write_dictionary(params, m_file, m_indenter);
         }
 
         // Write a <transform> element.
-        void write(const Transformd& transform)
+        void write_transform(const Transformd& transform)
         {
-            Element element("transform", m_file, m_indenter);
+            XMLElement element("transform", m_file, m_indenter);
             element.write(true);
 
             {
-                Element child_element("matrix", m_file, m_indenter);
+                XMLElement child_element("matrix", m_file, m_indenter);
                 child_element.write(true);
 
                 write_vector(
@@ -306,14 +274,14 @@ namespace
         }
 
         // Write a <transform> element with a "time" attribute.
-        void write(const Transformd& transform, const double time)
+        void write_transform(const Transformd& transform, const double time)
         {
-            Element element("transform", m_file, m_indenter);
+            XMLElement element("transform", m_file, m_indenter);
             element.add_attribute("time", time);
             element.write(true);
 
             {
-                Element child_element("matrix", m_file, m_indenter);
+                XMLElement child_element("matrix", m_file, m_indenter);
                 child_element.write(true);
 
                 write_vector(
@@ -324,10 +292,22 @@ namespace
             }
         }
 
-        // Write an array of color values.
-        void write(const char* element_name, const ColorValueArray& values)
+        // Write a transform sequence.
+        void write_transform_sequence(const TransformSequence& transform_sequence)
         {
-            Element element(element_name, m_file, m_indenter);
+            for (size_t i = 0; i < transform_sequence.size(); ++i)
+            {
+                double time;
+                Transformd transform;
+                transform_sequence.get_transform(i, time, transform);
+                write_transform(transform, time);
+            }
+        }
+
+        // Write an array of color values.
+        void write_value_array(const char* element_name, const ColorValueArray& values)
+        {
+            XMLElement element(element_name, m_file, m_indenter);
             element.write(true);
             write_vector(
                 values,
@@ -339,81 +319,67 @@ namespace
         template <typename Entity>
         void write_entity(const char* entity_name, const Entity& entity)
         {
-            Element element(entity_name, m_file, m_indenter);
+            XMLElement element(entity_name, m_file, m_indenter);
             element.add_attribute("name", entity.get_name());
             element.add_attribute("model", entity.get_model());
             element.write(!entity.get_parameters().empty());
 
-            write(entity.get_parameters());
+            write_params(entity.get_parameters());
         }
 
         template <typename T>
-        void write(const TypedEntityVector<T>& collection)
+        void write_collection(TypedEntityVector<T>& collection)
         {
-            for (const_each<TypedEntityVector<T> > i = collection; i; ++i)
+            for (each<TypedEntityVector<T> > i = collection; i; ++i)
                 write(*i);
         }
 
         template <typename T>
-        void write(const TypedEntityMap<T>& collection)
+        void write_collection(const TypedEntityMap<T>& collection)
         {
             for (const_each<TypedEntityMap<T> > i = collection; i; ++i)
                 write(*i);
         }
 
-        void write(const TextureInstanceContainer& texture_instances, const TextureContainer& textures)
+        void write_collection(const TextureInstanceContainer& texture_instances, const TextureContainer& textures)
         {
             for (const_each<TextureInstanceContainer> i = texture_instances; i; ++i)
                 write(*i, textures);
         }
 
-        void write(const ObjectInstanceContainer& object_instances, const Assembly& assembly)
+        void write_collection(const ObjectInstanceContainer& object_instances, const Assembly& assembly)
         {
             for (const_each<ObjectInstanceContainer> i = object_instances; i; ++i)
                 write(*i, assembly);
         }
 
-        void write(const AssemblyInstanceContainer& assembly_instances, const Scene& scene)
-        {
-            for (const_each<AssemblyInstanceContainer> i = assembly_instances; i; ++i)
-                write(*i, scene);
-        }
-
         // Write a <color> element.
         void write(const ColorEntity& color_entity)
         {
-            Element element("color", m_file, m_indenter);
+            XMLElement element("color", m_file, m_indenter);
             element.add_attribute("name", color_entity.get_name());
             element.write(true);
 
-            write(color_entity.get_parameters());
+            write_params(color_entity.get_parameters());
 
-            write("values", color_entity.get_values());
-            write("alpha", color_entity.get_alpha());
+            write_value_array("values", color_entity.get_values());
+            write_value_array("alpha", color_entity.get_alpha());
         }
 
         // Write a <texture> element.
-        void write(const Texture& texture)
+        void write(Texture& texture)
         {
-            Element element("texture", m_file, m_indenter);
+            XMLElement element("texture", m_file, m_indenter);
             element.add_attribute("name", texture.get_name());
             element.add_attribute("model", texture.get_model());
             element.write(!texture.get_parameters().empty());
 
-            ParamArray params = texture.get_parameters();
+            ParamArray& params = texture.get_parameters();
 
             if (params.strings().exist("filename"))
-            {
-                const filesystem::path source_filepath = params.get<string>("filename");
-                const filesystem::path filename = source_filepath.filename();
-                const filesystem::path dest_filepath = m_project_root_path / filename;
+                handle_link_to_asset(params, "filename");
 
-                params.insert("filename", filename.string());
-
-                copy_file_if_not_exists(source_filepath, dest_filepath);
-            }
-
-            write(params);
+            write_params(params);
         }
 
         // Write a <texture_instance> element.
@@ -421,17 +387,17 @@ namespace
             const TextureInstance&  texture_instance,
             const TextureContainer& textures)
         {
-            const Texture* texture = textures.get_by_index(texture_instance.get_texture_index());
+            const Texture* texture = textures.get_by_name(texture_instance.get_texture_name());
 
             if (texture == 0)
                 return;
 
-            Element element("texture_instance", m_file, m_indenter);
+            XMLElement element("texture_instance", m_file, m_indenter);
             element.add_attribute("name", texture_instance.get_name());
             element.add_attribute("texture", texture->get_name());
             element.write(!texture_instance.get_parameters().empty());
 
-            write(texture_instance.get_parameters());
+            write_params(texture_instance.get_parameters());
         }
 
         // Write a <bsdf> element.
@@ -479,62 +445,63 @@ namespace
         // Write a <light> element.
         void write(const Light& light)
         {
-            Element element("light", m_file, m_indenter);
+            XMLElement element("light", m_file, m_indenter);
             element.add_attribute("name", light.get_name());
             element.add_attribute("model", light.get_model());
             element.write(true);
 
-            write(light.get_parameters());
-            write(light.get_transform());
+            write_params(light.get_parameters());
+            write_transform(light.get_transform());
         }
 
         // Write a <camera> element.
         void write(const Camera& camera)
         {
-            Element element("camera", m_file, m_indenter);
+            XMLElement element("camera", m_file, m_indenter);
             element.add_attribute("name", camera.get_name());
             element.add_attribute("model", camera.get_model());
             element.write(true);
 
-            write(camera.get_parameters());
-
-            const TransformSequence& transform_sequence = camera.transform_sequence();
-
-            for (size_t i = 0; i < transform_sequence.size(); ++i)
-            {
-                double time;
-                Transformd transform;
-                transform_sequence.get_transform(i, time, transform);
-                write(transform, time);
-            }
+            write_params(camera.get_parameters());
+            write_transform_sequence(camera.transform_sequence());
         }
 
         // Write a collection of <object> elements.
-        void write(const ObjectContainer& objects)
+        void write_object_collection(ObjectContainer& objects)
         {
             set<string> groups;
 
             for (size_t i = 0; i < objects.size(); ++i)
             {
-                const Object& object = *objects.get_by_index(i);
+                Object& object = *objects.get_by_index(i);
 
                 if (strcmp(object.get_model(), MeshObjectFactory::get_model()) == 0)
                 {
-                    const ParamArray& params = object.get_parameters();
+                    ParamArray& params = object.get_parameters();
 
                     if (params.strings().exist("__base_object_name"))
                     {
-                        // Mesh object group.
-                        const string base_object_name = params.get<string>("__base_object_name");
-                        if (groups.find(base_object_name) == groups.end())
+                        // This object belongs to a group of objects.
+                        const string group_name = params.get<string>("__base_object_name");
+                        if (groups.find(group_name) == groups.end())
                         {
-                            groups.insert(base_object_name);
-                            write_mesh_object_group(base_object_name, params);
+                            // This is the first time we encounter this group of objects.
+                            groups.insert(group_name);
+
+                            // Write the object group.
+                            params.strings().remove("__base_object_name");
+                            write_mesh_object(group_name, params);
+                            params.strings().insert("__base_object_name", group_name);
                         }
+                    }
+                    else if (params.strings().exist("filename") || params.dictionaries().exist("filename"))
+                    {
+                        // This object has a filename parameter.
+                        write_mesh_object(object.get_name(), params);
                     }
                     else
                     {
-                        // Orphan mesh object.
+                        // This object does not belong to a group and does not have a filename parameter.
                         write_orphan_mesh_object(object);
                     }
                 }
@@ -544,6 +511,30 @@ namespace
                     write(object);
                 }
             }
+        }
+
+        // Write an <object> element for a mesh with a filename.
+        void write_mesh_object(const string& name, ParamArray& params)
+        {
+            // The object must either have a scalar filename or a composite filename, but not both.
+            assert(params.strings().exist("filename") ^ params.dictionaries().exist("filename"));
+
+            if (params.strings().exist("filename"))
+                handle_link_to_asset(params, "filename");
+            else
+            {
+                Dictionary& filepaths = params.dictionaries().get("filename");
+
+                for (const_each<StringDictionary> i = filepaths.strings(); i; ++i)
+                    handle_link_to_asset(filepaths, i->name());
+            }
+
+            // Write an <object> element.
+            XMLElement element("object", m_file, m_indenter);
+            element.add_attribute("name", name);
+            element.add_attribute("model", MeshObjectFactory::get_model());
+            element.write(true);
+            write_params(params);
         }
 
         // Object name mapping established by write_orphan_mesh_object().
@@ -557,77 +548,36 @@ namespace
             return i == m_object_name_mapping.end() ? old_name : i->second;
         }
 
-        void write_orphan_mesh_object(const Object& object)
+        // Write an <object> element for a mesh object without a filename.
+        void write_orphan_mesh_object(Object& object)
         {
+            // Construct the name of the mesh file.
             const string name = object.get_name();
             const string filename = name + ".obj";
 
-            if (!(m_options & ProjectFileWriter::OmitMeshFiles))
+            // Generate the mesh file on disk.
+            if (!(m_options & ProjectFileWriter::OmitWritingMeshFiles))
             {
-                // Write the mesh object to disk.
-                const string filepath = (m_project_root_path / filename).string();
+                const string filepath = (m_project_new_root_path / filename).string();
                 MeshObjectWriter::write(
                     static_cast<const MeshObject&>(object),
                     name.c_str(),
                     filepath.c_str());
             }
 
-            // Add a "filename" parameter to the parameters of the object.
-            ParamArray params = object.get_parameters();
+            // Add a "filename" parameter to the object.
+            ParamArray& params = object.get_parameters();
             params.insert("filename", filename);
 
             // Write an <object> element.
-            write_mesh_object(name, params);
+            XMLElement element("object", m_file, m_indenter);
+            element.add_attribute("name", name);
+            element.add_attribute("model", MeshObjectFactory::get_model());
+            element.write(true);
+            write_params(params);
 
             // Update the object name mapping.
             m_object_name_mapping[name] = name + "." + name;
-        }
-
-        void write_mesh_object_group(const string& base_object_name, ParamArray params)
-        {
-            // Iterate over file paths, convert them to file names, and write mesh files to output directory.
-            if (params.strings().exist("filename"))
-            {
-                // Transform "filename" from a file path to a file name.
-                const string filepath = params.get<string>("filename");
-                const string filename = filesystem::path(filepath).filename().string();
-                params.insert("filename", filename);
-
-                // Copy the mesh file to the output directory.
-                copy_file_if_not_exists(filepath, m_project_root_path / filename);
-            }
-            else if (params.dictionaries().exist("filename"))
-            {
-                StringDictionary& filepaths = params.dictionaries().get("filename").strings();
-                for (const_each<StringDictionary> i = filepaths; i; ++i)
-                {
-                    // Transform the value of this key from a file path to a file name.
-                    const string key = i->name();
-                    const string filepath = i->value<string>();
-                    const string filename = filesystem::path(filepath).filename().string();
-                    filepaths.insert(key, filename);
-
-                    // Copy the mesh file to the output directory.
-                    copy_file_if_not_exists(filepath, m_project_root_path / filename);
-                }
-            }
-
-            // Remove hidden parameters.
-            params.strings().remove("__base_object_name");
-
-            // Write a single <object> element for this group of mesh objects.
-            write_mesh_object(base_object_name, params);
-        }
-
-        // Write an <object> element for a mesh object.
-        void write_mesh_object(const string& name, const ParamArray& params)
-        {
-            Element element("object", m_file, m_indenter);
-            element.add_attribute("name", name);
-            element.add_attribute("model", MeshObjectFactory::get_model());
-            element.write(!params.empty());
-
-            write(params);
         }
 
         // Write an <object> element.
@@ -642,7 +592,7 @@ namespace
             const ObjectInstance::Side  side,
             const string&               material_name)
         {
-            Element element("assign_material", m_file, m_indenter);
+            XMLElement element("assign_material", m_file, m_indenter);
             element.add_attribute("slot", slot);
             element.add_attribute("side", side == ObjectInstance::FrontSide ? "front" : "back");
             element.add_attribute("material", material_name);
@@ -663,13 +613,13 @@ namespace
             const ObjectInstance&   object_instance,
             const Assembly&         assembly)
         {
-            Element element("object_instance", m_file, m_indenter);
+            XMLElement element("object_instance", m_file, m_indenter);
             element.add_attribute("name", object_instance.get_name());
             element.add_attribute("object", translate_object_name(object_instance.get_object().get_name()));
             element.write(true);
 
-            write(object_instance.get_parameters());
-            write(object_instance.get_transform());
+            write_params(object_instance.get_parameters());
+            write_transform(object_instance.get_transform());
 
             // Write the <assign_material> elements.
             write_assign_materials(ObjectInstance::FrontSide, object_instance.get_front_material_names());
@@ -679,7 +629,7 @@ namespace
         // Write an <assembly> element.
         void write(const Assembly& assembly)
         {
-            Element element("assembly", m_file, m_indenter);
+            XMLElement element("assembly", m_file, m_indenter);
             element.add_attribute("name", assembly.get_name());
             element.write(
                 !assembly.get_parameters().empty() ||
@@ -692,39 +642,41 @@ namespace
                 !assembly.materials().empty() ||
                 !assembly.lights().empty() ||
                 !assembly.objects().empty() ||
-                !assembly.object_instances().empty());
+                !assembly.object_instances().empty() ||
+                !assembly.assemblies().empty() ||
+                !assembly.assembly_instances().empty());
 
-            write(assembly.get_parameters());
+            write_params(assembly.get_parameters());
 
-            write(assembly.colors());
-            write(assembly.textures());
-            write(assembly.texture_instances(), assembly.textures());
-            write(assembly.bsdfs());
-            write(assembly.edfs());
-            write(assembly.surface_shaders());
-            write(assembly.materials());
-            write(assembly.lights());
-            write(assembly.objects());
-            write(assembly.object_instances(), assembly);
+            write_collection(assembly.colors());
+            write_collection(assembly.textures());
+            write_collection(assembly.texture_instances(), assembly.textures());
+            write_collection(assembly.bsdfs());
+            write_collection(assembly.edfs());
+            write_collection(assembly.surface_shaders());
+            write_collection(assembly.materials());
+            write_collection(assembly.lights());
+            write_object_collection(assembly.objects());
+            write_collection(assembly.object_instances(), assembly);
+            write_collection(assembly.assemblies());
+            write_collection(assembly.assembly_instances());
         }
 
         // Write an <assembly_instance> element.
-        void write(
-            const AssemblyInstance& assembly_instance,
-            const Scene&            scene)
+        void write(const AssemblyInstance& assembly_instance)
         {
-            Element element("assembly_instance", m_file, m_indenter);
+            XMLElement element("assembly_instance", m_file, m_indenter);
             element.add_attribute("name", assembly_instance.get_name());
             element.add_attribute("assembly", assembly_instance.get_assembly().get_name());
-            element.write(true);
+            element.write(!assembly_instance.transform_sequence().empty());
 
-            write(assembly_instance.get_transform());
+            write_transform_sequence(assembly_instance.transform_sequence());
         }
 
         // Write a <scene> element.
-        void write(const Scene& scene)
+        void write_scene(const Scene& scene)
         {
-            Element element("scene", m_file, m_indenter);
+            XMLElement element("scene", m_file, m_indenter);
             element.write(
                 scene.get_camera() != 0 ||
                 !scene.colors().empty() ||
@@ -739,70 +691,86 @@ namespace
             if (scene.get_camera())
                 write(*scene.get_camera());
 
-            write(scene.colors());
-            write(scene.textures());
-            write(scene.texture_instances(), scene.textures());
-            write(scene.environment_edfs());
-            write(scene.environment_shaders());
+            write_collection(scene.colors());
+            write_collection(scene.textures());
+            write_collection(scene.texture_instances(), scene.textures());
+            write_collection(scene.environment_edfs());
+            write_collection(scene.environment_shaders());
 
             if (scene.get_environment())
                 write(*scene.get_environment());
 
-            write(scene.assemblies());
-            write(scene.assembly_instances(), scene);
+            write_collection(scene.assemblies());
+            write_collection(scene.assembly_instances());
         }
 
         // Write a <frame> element.
-        void write(const Frame& frame)
+        void write_frame(const Frame& frame)
         {
-            Element element("frame", m_file, m_indenter);
+            XMLElement element("frame", m_file, m_indenter);
             element.add_attribute("name", frame.get_name());
             element.write(!frame.get_parameters().empty());
-            write(frame.get_parameters());
+            write_params(frame.get_parameters());
         }
 
         // Write a <configuration> element.
-        void write(const Configuration& configuration)
+        void write_configuration(const Configuration& configuration)
         {
-            Element element("configuration", m_file, m_indenter);
+            XMLElement element("configuration", m_file, m_indenter);
             element.add_attribute("name", configuration.get_name());
             if (configuration.get_base())
                 element.add_attribute("base", configuration.get_base()->get_name());
             element.write(!configuration.get_parameters().empty());
-            write(configuration.get_parameters());
+            write_params(configuration.get_parameters());
+        }
+
+        size_t count_non_base_configurations(const ConfigurationContainer& configurations)
+        {
+            size_t count = 0;
+
+            for (const_each<ConfigurationContainer> i = configurations; i; ++i)
+            {
+                if (!BaseConfigurationFactory::is_base_configuration(i->get_name()))
+                    ++count;
+            }
+
+            return count;
         }
 
         // Write a <configurations> element.
         void write_configurations(const Project& project)
         {
-            Element element("configurations", m_file, m_indenter);
-            element.write(!project.configurations().empty());
+            XMLElement element("configurations", m_file, m_indenter);
+            element.write(count_non_base_configurations(project.configurations()) > 0);
 
             // Write configurations.
             for (const_each<ConfigurationContainer> i = project.configurations(); i; ++i)
             {
                 const Configuration& configuration = *i;
                 if (!BaseConfigurationFactory::is_base_configuration(configuration.get_name()))
-                    write(configuration);
+                    write_configuration(configuration);
             }
         }
 
         // Write an <output> element.
         void write_output(const Project& project)
         {
-            Element element("output", m_file, m_indenter);
+            XMLElement element("output", m_file, m_indenter);
             element.write(project.get_frame() != 0);
-            write(*project.get_frame());
+
+            if (project.get_frame())
+                write_frame(*project.get_frame());
         }
 
         // Write a <project> element.
-        void write(const Project& project)
+        void write_project(const Project& project)
         {
-            Element element("project", m_file, m_indenter);
+            XMLElement element("project", m_file, m_indenter);
+            element.add_attribute("format_revision", ProjectFileFormatRevision);
             element.write(true);
 
             if (project.get_scene())
-                write(*project.get_scene());
+                write_scene(*project.get_scene());
 
             write_output(project);
             write_configurations(project);
@@ -812,28 +780,27 @@ namespace
 
 bool ProjectFileWriter::write(
     const Project&  project,
+    const char*     filepath,
     const Options   options)
 {
-    if (!project.has_path())
-        return false;
-
-    RENDERER_LOG_INFO("writing project file %s...", project.get_path());
+    RENDERER_LOG_INFO("writing project file %s...", filepath);
 
     // Open the file for writing.
-    FILE* file = fopen(project.get_path(), "wt");
+    FILE* file = fopen(filepath, "wt");
     if (file == 0)
         return false;
 
     // Write the project.
     Writer writer(
         project,
+        filepath,
         file,
         options);
 
     // Close the file.
     fclose(file);
 
-    RENDERER_LOG_INFO("wrote project file %s.", project.get_path());
+    RENDERER_LOG_INFO("wrote project file %s.", filepath);
 
     return true;
 }

@@ -40,7 +40,10 @@
 
 // libpng header.
 #include "png.h"
-#include "pngstruct.h"
+
+#if PNG_LIBPNG_VER_DLLNUM >= 15
+    #include "pngstruct.h"
+#endif
 
 // Standard headers.
 #include <cassert>
@@ -253,7 +256,7 @@ void PNGImageFileWriter::write(
             &text_chunks[0],
             static_cast<int>(text_chunks.size()));
     }
-    
+
     // Write the file header information.
     png_write_info(png_ptr, info_ptr);
 

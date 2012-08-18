@@ -30,126 +30,241 @@
 #define APPLESEED_FOUNDATION_UTILITY_STATISTICS_H
 
 // appleseed.foundation headers.
+#include "foundation/core/exceptions/stringexception.h"
 #include "foundation/math/population.h"
-#include "foundation/utility/string.h"
+#include "foundation/platform/compiler.h"
 #include "foundation/platform/types.h"
+#include "foundation/utility/string.h"
 
 // Standard headers.
+#include <cassert>
 #include <cstddef>
 #include <ios>
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace foundation
 {
 
+//
+// A named collection of statistics.
+//
+
 class Statistics
 {
   public:
-    explicit Statistics(const std::string& title);
-
-    template <typename T>
-    void add(
-        const std::string&          name,
-        const std::string&          title,
-        const T&                    value);
-
-    void add_size(
-        const std::string&          name,
-        const std::string&          title,
-        const uint64                bytes,
-        const std::streamsize       precision = 1);
-
-    void add_time(
-        const std::string&          name,
-        const std::string&          title,
-        const double                seconds,
-        const std::streamsize       precision = 1);
-
-    template <typename T>
-    void add_percent(
-        const std::string&          name,
-        const std::string&          title,
-        const T                     numerator,
-        const T                     denominator,
-        const std::streamsize       precision = 1);
-
-    template <typename T>
-    void add_population(
-        const std::string&          name,
-        const std::string&          title,
-        const Population<T>&        value);
-
-    template <typename T>
-    void add_population(
-        const std::string&          name,
-        const std::string&          title,
-        const std::string&          unit,
-        const Population<T>&        value);
-
-    std::string to_string(const size_t max_title_length = 16) const;
-
-  private:
-    struct Record
+    struct ExceptionDuplicateName
+      : public StringException
     {
-        enum Type
-        {
-            UnsignedInteger,
-            UnsignedIntegerPopulation,
-            FloatingPoint,
-            FloatingPointPopulation,
-            String
-        };
-
-        std::string     m_name;
-        std::string     m_title;
-        std::string     m_unit;
-        Type            m_type;
-        size_t          m_index;
-
-        Record()
-          : m_type(Type())
-          , m_index(size_t())
-        {
-        }
-
-        Record(
-            const std::string&      name,
-            const std::string&      title,
-            const Type              type,
-            const size_t            index)
-          : m_name(name)
-          , m_title(title)
-          , m_type(type)
-          , m_index(index)
-        {
-        }
-
-        Record(
-            const std::string&      name,
-            const std::string&      title,
-            const std::string&      unit,
-            const Type              type,
-            const size_t            index)
-          : m_name(name)
-          , m_title(title)
-          , m_unit(unit)
-          , m_type(type)
-          , m_index(index)
-        {
-        }
+        explicit ExceptionDuplicateName(const char* name);
     };
 
-    typedef std::vector<Record> RecordVector;
+    struct ExceptionTypeMismatch
+      : public StringException
+    {
+        explicit ExceptionTypeMismatch(const char* name);
+    };
 
-    const std::string                   m_title;
+    struct Entry
+    {
+        std::string     m_name;
+        std::string     m_unit;
 
-    RecordVector                        m_records;
-    std::vector<size_t>                 m_uint_values;
-    std::vector<Population<size_t> >    m_uint_pop_values;
-    std::vector<double>                 m_fp_values;
-    std::vector<Population<double> >    m_fp_pop_values;
-    std::vector<std::string>            m_string_values;
+        explicit Entry(const std::string& name);
+
+        Entry(
+            const std::string&          name,
+            const std::string&          unit);
+
+        template <typename T>
+        const T* cast(const Entry* entry);
+
+        virtual std::auto_ptr<Entry> clone() const = 0;
+        virtual void merge(const Entry* other) = 0;
+        virtual std::string to_string() const = 0;
+    };
+
+    struct IntegerEntry
+      : public Entry
+    {
+        int64 m_value;
+
+        IntegerEntry(
+            const std::string&          name,
+            const std::string&          unit,
+            const int64                 value);
+
+        virtual std::auto_ptr<Entry> clone() const override;
+        virtual void merge(const Entry* other) override;
+        virtual std::string to_string() const override;
+    };
+
+    struct UnsignedIntegerEntry
+      : public Entry
+    {
+        uint64 m_value;
+
+        UnsignedIntegerEntry(
+            const std::string&          name,
+            const std::string&          unit,
+            const uint64                value);
+
+        virtual std::auto_ptr<Entry> clone() const override;
+        virtual void merge(const Entry* other) override;
+        virtual std::string to_string() const override;
+    };
+
+    struct FloatingPointEntry
+      : public Entry
+    {
+        double m_value;
+
+        FloatingPointEntry(
+            const std::string&          name,
+            const std::string&          unit,
+            const double                value);
+
+        virtual std::auto_ptr<Entry> clone() const override;
+        virtual void merge(const Entry* other) override;
+        virtual std::string to_string() const override;
+    };
+
+    struct StringEntry
+      : public Entry
+    {
+        std::string m_value;
+
+        StringEntry(
+            const std::string&          name,
+            const std::string&          unit,
+            const std::string&          value);
+
+        virtual std::auto_ptr<Entry> clone() const override;
+        virtual void merge(const Entry* other) override;
+        virtual std::string to_string() const override;
+    };
+
+    struct UnsignedIntegerPopulationEntry
+      : public Entry
+    {
+        Population<size_t> m_value;
+
+        UnsignedIntegerPopulationEntry(
+            const std::string&          name,
+            const std::string&          unit,
+            const Population<size_t>&   value);
+
+        virtual std::auto_ptr<Entry> clone() const override;
+        virtual void merge(const Entry* other) override;
+        virtual std::string to_string() const override;
+    };
+
+    struct FloatingPointPopulationEntry
+      : public Entry
+    {
+        Population<double> m_value;
+
+        FloatingPointPopulationEntry(
+            const std::string&          name,
+            const std::string&          unit,
+            const Population<double>&   value);
+
+        virtual std::auto_ptr<Entry> clone() const override;
+        virtual void merge(const Entry* other) override;
+        virtual std::string to_string() const override;
+    };
+
+    Statistics();
+    Statistics(const Statistics& rhs);
+
+    ~Statistics();
+
+    Statistics& operator=(const Statistics& rhs);
+
+    void clear();
+
+    template <typename T>
+    void insert(std::auto_ptr<T> entry);
+
+    template <typename T>
+    void insert(
+        const std::string&              name,
+        const T&                        value);
+
+    template <typename T>
+    void insert(
+        const std::string&              name,
+        const T&                        value,
+        const std::string&              unit);
+
+    void insert_size(
+        const std::string&              name,
+        const uint64                    bytes,
+        const std::streamsize           precision = 1);
+
+    void insert_time(
+        const std::string&              name,
+        const double                    seconds,
+        const std::streamsize           precision = 1);
+
+    template <typename T>
+    void insert_percent(
+        const std::string&              name,
+        const T                         numerator,
+        const T                         denominator,
+        const std::streamsize           precision = 1);
+
+    void insert(const Statistics& other);
+
+    void merge(const Statistics& other);
+
+    std::string to_string(const size_t max_header_length = 16) const;
+
+  private:
+    typedef std::vector<Entry*> EntryVector;
+    typedef std::map<std::string, Entry*> EntryIndex;
+
+    EntryVector                         m_entries;
+    EntryIndex                          m_index;
+
+    template <typename T>
+    T* cast(const Entry* entry);
+};
+
+
+//
+// A vector of foundation::Statistics objects.
+//
+
+class StatisticsVector
+{
+  public:
+    static StatisticsVector make(
+        const std::string&              name,
+        const Statistics&               stats);
+
+    void insert(
+        const std::string&              name,
+        const Statistics&               stats);
+
+    void merge(const StatisticsVector& other);
+
+    std::string to_string(const size_t max_header_length = 16) const;
+
+  private:
+    struct NamedStatistics
+    {
+        std::string     m_name;
+        Statistics      m_stats;
+    };
+
+    typedef std::vector<NamedStatistics> NamedStatisticsVector;
+
+    NamedStatisticsVector               m_stats;
+
+    void merge(const NamedStatistics& other);
 };
 
 
@@ -157,99 +272,134 @@ class Statistics
 // Statistics class implementation.
 //
 
-template <>
-inline void Statistics::add<size_t>(
-    const std::string&              name,
-    const std::string&              title,
-    const size_t&                   value)
+template <typename T>
+void Statistics::insert(std::auto_ptr<T> entry)
 {
-    const size_t index = m_uint_values.size();
-    m_uint_values.push_back(value);
-    m_records.push_back(Record(name, title, Record::UnsignedInteger, index));
-}
+    if (m_index.find(entry->m_name) != m_index.end())
+        throw ExceptionDuplicateName(entry->m_name.c_str());
 
-template <>
-inline void Statistics::add<double>(
-    const std::string&              name,
-    const std::string&              title,
-    const double&                   value)
-{
-    const size_t index = m_fp_values.size();
-    m_fp_values.push_back(value);
-    m_records.push_back(Record(name, title, Record::FloatingPoint, index));
-}
+    T* entry_ptr = entry.release();
 
-template <>
-inline void Statistics::add<std::string>(
-    const std::string&              name,
-    const std::string&              title,
-    const std::string&              value)
-{
-    const size_t index = m_string_values.size();
-    m_string_values.push_back(value);
-    m_records.push_back(Record(name, title, Record::String, index));
-}
-
-inline void Statistics::add_size(
-    const std::string&              name,
-    const std::string&              title,
-    const uint64                    bytes,
-    const std::streamsize           precision)
-{
-    add<std::string>(name, title, pretty_size(bytes, precision));
-}
-
-inline void Statistics::add_time(
-    const std::string&              name,
-    const std::string&              title,
-    const double                    seconds,
-    const std::streamsize           precision)
-{
-    add<std::string>(name, title, pretty_time(seconds, precision));
+    m_entries.push_back(entry_ptr);
+    m_index[entry_ptr->m_name] = entry_ptr;
 }
 
 template <typename T>
-inline void Statistics::add_percent(
-    const std::string&              name,
-    const std::string&              title,
-    const T                         numerator,
-    const T                         denominator,
-    const std::streamsize           precision)
+void Statistics::insert(
+    const std::string&                  name,
+    const T&                            value)
 {
-    add<std::string>(name, title, pretty_percent(numerator, denominator, precision));
+    insert(name, value, std::string());
+}
+
+template <>
+inline void Statistics::insert<int64>(
+    const std::string&                  name,
+    const int64&                        value,
+    const std::string&                  unit)
+{
+    insert(
+        std::auto_ptr<IntegerEntry>(
+            new IntegerEntry(name, unit, value)));
+}
+
+template <>
+inline void Statistics::insert<uint64>(
+    const std::string&                  name,
+    const uint64&                       value,
+    const std::string&                  unit)
+{
+    insert(
+        std::auto_ptr<UnsignedIntegerEntry>(
+            new UnsignedIntegerEntry(name, unit, value)));
+}
+
+template <>
+inline void Statistics::insert<double>(
+    const std::string&                  name,
+    const double&                       value,
+    const std::string&                  unit)
+{
+    insert(
+        std::auto_ptr<FloatingPointEntry>(
+            new FloatingPointEntry(name, unit, value)));
+}
+
+template <>
+inline void Statistics::insert<std::string>(
+    const std::string&                  name,
+    const std::string&                  value,
+    const std::string&                  unit)
+{
+    insert(
+        std::auto_ptr<StringEntry>(
+            new StringEntry(name, unit, value)));
+}
+
+template <>
+inline void Statistics::insert<Population<size_t> >(
+    const std::string&                  name,
+    const Population<size_t>&           value,
+    const std::string&                  unit)
+{
+    insert(
+        std::auto_ptr<UnsignedIntegerPopulationEntry>(
+            new UnsignedIntegerPopulationEntry(name, unit, value)));
+}
+
+template <>
+inline void Statistics::insert<Population<double> >(
+    const std::string&                  name,
+    const Population<double>&           value,
+    const std::string&                  unit)
+{
+    insert(
+        std::auto_ptr<FloatingPointPopulationEntry>(
+            new FloatingPointPopulationEntry(name, unit, value)));
+}
+
+inline void Statistics::insert_size(
+    const std::string&                  name,
+    const uint64                        bytes,
+    const std::streamsize               precision)
+{
+    insert(name, pretty_size(bytes, precision));
+}
+
+inline void Statistics::insert_time(
+    const std::string&                  name,
+    const double                        seconds,
+    const std::streamsize               precision)
+{
+    insert(name, pretty_time(seconds, precision));
 }
 
 template <typename T>
-inline void Statistics::add_population(
-    const std::string&              name,
-    const std::string&              title,
-    const Population<T>&            value)
+void Statistics::insert_percent(
+    const std::string&                  name,
+    const T                             numerator,
+    const T                             denominator,
+    const std::streamsize               precision)
 {
-    add_population<T>(name, title, "", value);
+    insert(name, pretty_percent(numerator, denominator, precision));
 }
 
-template <>
-inline void Statistics::add_population<size_t>(
-    const std::string&              name,
-    const std::string&              title,
-    const std::string&              unit,
-    const Population<size_t>&       value)
-{
-    const size_t index = m_uint_pop_values.size();
-    m_uint_pop_values.push_back(value);
-    m_records.push_back(Record(name, title, unit, Record::UnsignedIntegerPopulation, index));
-}
 
-template <>
-inline void Statistics::add_population<double>(
-    const std::string&              name,
-    const std::string&              title,
-    const std::string&              unit,
-    const Population<double>&       value)
+//
+// Statistics::Entry class implementation.
+//
+
+template <typename T>
+const T* Statistics::Entry::cast(const Entry* entry)
 {
-    const size_t index = m_fp_pop_values.size();
-    m_fp_pop_values.push_back(value);
-    m_records.push_back(Record(name, title, unit, Record::FloatingPointPopulation, index));
+    assert(entry);
+
+    const T* typed_entry = dynamic_cast<const T*>(entry);
+
+    if (typed_entry == 0)
+        throw ExceptionTypeMismatch(entry->m_name.c_str());
+
+    return typed_entry;
 }
 
 }       // namespace foundation
