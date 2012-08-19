@@ -37,14 +37,47 @@
 #include <cassert>
 #include <cstddef>
 
+// SSE headers.
+#include <xmmintrin.h>
+
 namespace foundation {
 namespace qbvh {
 
 // The constant used to represent empty leaves.
 #define EMPTY_LEAF_NODE		0xFFFFFFFF
+// TODO: Conform this value to standard.
+#define MAX_SCALAR          (3.402823466e+38f)
+
+//
+// Helper class, SSE scalar.
+//
+typedef struct SSEScalar {
+    union {
+		struct {
+			float   	x;
+			float   	y;
+			float   	z;
+			float   	w;
+		};
+		float   		v[4];
+		__m128			m;
+	};
+} SSEScalar;
+
+//
+// Helper class, SSE vector.
+//
+typedef struct SSEVector {
+	SSEScalar	    x;
+	SSEScalar	    y;
+	SSEScalar	    z;
+} SSEVector;
 
 //
 // Node (leaf node or interior node) of a QBVH.
+// 128 bytes long, perfect for cache line.
+// User data is not supported by QBVH nodes, because 
+// we directly encode leave data in its parent.
 //
 
 template <typename AABB>
@@ -53,45 +86,40 @@ class FOUNDATION_ALIGN(64) Node
   public:
     typedef AABB AABBType;
 
-    // Set/get the node type.
-    void make_interior();
-    void make_leaf();
-    bool is_interior() const;
-    bool is_leaf() const;
+    // Constructor.
+    Node();
 
-    // Set/get the bounding boxes of the child nodes (interior nodes only, static case).
-    void set_left_bbox(const AABBType& bbox);
-    void set_right_bbox(const AABBType& bbox);
-    AABBType get_left_bbox() const;
-    AABBType get_right_bbox() const;
+    // Get the node type by node index.
+    static bool is_leaf(const int32 node_index);
+    // Get the i-th split axis (there are three split axes for each interior node) by node index.
+    static size_t get_split_axis(const int32 node_index);
+    // Get the index of the first item by node index.
+    static size_t get_item_index(const int32 node_index);
 
-    // Set/get the bounding boxes of the child nodes (interior nodes only, motion case).
-    void set_left_bbox_index(const size_t index);
-    void set_left_bbox_count(const size_t count);
-    void set_right_bbox_index(const size_t index);
-    void set_right_bbox_count(const size_t count);
-    size_t get_left_bbox_index() const;
-    size_t get_left_bbox_count() const;
-    size_t get_right_bbox_index() const;
-    size_t get_right_bbox_count() const;
+    // Set the split axis of the i-th child node (interior nodes only).
+    void set_split_axis(const size_t i, const size_t axis);
 
-    // Access user data (leaf nodes only).
-    static const size_t MaxUserDataSize;
-    template <typename U> void set_user_data(const U& data);
-    template <typename U> const U& get_user_data() const;
-    template <typename U> U& get_user_data();
+    // Set/get the bounding boxes of the i-th child node (interior nodes only, static case).
+    void set_bbox(const size_t i, const AABBType& bbox);
+    AABBType get_bbox(const size_t i) const;
 
-    // Set/get the index of the first child node (interior nodes only).
-    void set_child_node_index(const size_t index);
-    size_t get_child_node_index() const;
+    // Set/get the bounding boxes of the i-th child node (interior nodes only, motion case).
+    void set_bbox_index(const size_t i, const size_t index);
+    void set_bbox_count(const size_t i, const size_t count);
+    size_t get_bbox_index(const size_t i) const;
+    size_t get_bbox_count(const size_t i) const;
 
-    // Set/get the index of the first item (leaf nodes only).
-    void set_item_index(const size_t index);
-    size_t get_item_index() const;
+    // Set/get the index of the i-th child node (interior nodes only).
+    void set_child_node_index(const size_t i, const size_t index);
+    size_t get_child_node_index(const size_t i) const;
 
-    // Set/get the item count (leaf nodes only).
-    void set_item_count(const size_t count);
-    size_t get_item_count() const;
+    // Set/get the index of the first item of the i-th child node (leaf nodes only).
+    void set_item_index(const size_t i, const size_t index);
+    size_t get_item_index(const size_t i) const;
+
+    // Set/get the item count of the i-th child node (leaf nodes only).
+    void set_item_count(const size_t i, const size_t count);
+    size_t get_item_count(const size_t i) const;
 
   private:
     template <typename Tree, typename Visitor, typename Ray, size_t StackSize, size_t N>
@@ -100,7 +128,9 @@ class FOUNDATION_ALIGN(64) Node
     typedef typename AABBType::ValueType ValueType;
     static const size_t Dimension = AABBType::Dimension;
 
-    SSE_ALIGN ValueType     m_bbox_data[8 * Dimension];
+    // The bounding boxes of 4 child nodes
+    SSEVector               m_box_min;
+    SSEVector               m_box_max;
 
     // If a child is a leaf, its index will be negative, 
     // the 2 next bits will code the split axis, and the 29 remaining bits 
@@ -110,7 +140,7 @@ class FOUNDATION_ALIGN(64) Node
     // is different from other implementations, we don't have the limitation of 
     // at the most 64 primitives each leaf, we can have any number of leaf 
     // primitives.
-    int32					m_prim_count[4];
+    uint32					m_prim_count[4];
 };
 
 
@@ -119,191 +149,136 @@ class FOUNDATION_ALIGN(64) Node
 //
 
 template <typename AABB>
-inline void Node<AABB>::make_interior()
+inline Node<AABB>::Node()
 {
-    m_item_count = ~0;
-}
+    // Set to empty bounding boxes
+    m_box_min.x.m = _mm_set1_ps(MAX_SCALAR);
+	m_box_min.y.m = _mm_set1_ps(MAX_SCALAR);
+	m_box_min.z.m = _mm_set1_ps(MAX_SCALAR);
+	m_box_max.x.m = _mm_set1_ps(-MAX_SCALAR);
+	m_box_max.y.m = _mm_set1_ps(-MAX_SCALAR);
+	m_box_max.z.m = _mm_set1_ps(-MAX_SCALAR);
 
-template <typename AABB>
-inline void Node<AABB>::make_leaf()
-{
-    if (m_item_count == ~0)
-        m_item_count = 0;
-}
-
-template <typename AABB>
-inline bool Node<AABB>::is_interior() const
-{
-    return m_item_count == ~0;
-}
-
-template <typename AABB>
-inline bool Node<AABB>::is_leaf() const
-{
-    return m_item_count != ~0;
-}
-
-template <typename AABB>
-inline void Node<AABB>::set_left_bbox(const AABBType& bbox)
-{
-    for (size_t i = 0; i < Dimension; ++i)
+    // All children are empty leaves by default
+    for (size_t i = 0; i < 4; ++i)
     {
-        m_bbox_data[i * 4 + 0] = bbox.min[i];
-        m_bbox_data[i * 4 + 2] = bbox.max[i];
+        m_child[i] = EMPTY_LEAF_NODE;
+        m_prim_count[i] = 0;
     }
 }
 
 template <typename AABB>
-inline void Node<AABB>::set_right_bbox(const AABBType& bbox)
+inline bool Node<AABB>::is_leaf(const int32 node_index)
 {
-    for (size_t i = 0; i < Dimension; ++i)
-    {
-        m_bbox_data[i * 4 + 1] = bbox.min[i];
-        m_bbox_data[i * 4 + 3] = bbox.max[i];
-    }
+    return (node_index < 0);
 }
 
 template <typename AABB>
-inline AABB Node<AABB>::get_left_bbox() const
+inline size_t Node<AABB>::get_split_axis(const int32 node_index)
+{
+    return (size_t)((node_index >> 29) & 3);
+}
+
+template <typename AABB>
+inline size_t Node<AABB>::get_item_index(const int32 node_index)
+{
+    return (size_t)(node_index & 0x1FFFFFFF);
+}
+
+template <typename AABB>
+inline void Node<AABB>::set_split_axis(const size_t i, const size_t axis)
+{
+    m_child[i] &= (~(3 << 29)); // Clear the split axis bits
+	m_child[i] |= ((((int32)axis) & 3) << 29);
+}
+
+template <typename AABB>
+inline void Node<AABB>::set_bbox(const size_t i, const AABBType& bbox)
+{
+    m_box_min.x.v[i] = bbox.min[0];
+	m_box_min.y.v[i] = bbox.min[1];
+	m_box_min.z.v[i] = bbox.min[2];
+	m_box_max.x.v[i] = bbox.max[0];
+	m_box_max.y.v[i] = bbox.max[1];
+	m_box_max.z.v[i] = bbox.max[2];
+}
+
+template <typename AABB>
+inline AABB Node<AABB>::get_bbox(const size_t i) const
 {
     AABBType bbox;
 
-    for (size_t i = 0; i < Dimension; ++i)
-    {
-        bbox.min[i] = m_bbox_data[i * 4 + 0];
-        bbox.max[i] = m_bbox_data[i * 4 + 2];
-    }
+    bbox.min[0] = m_box_min.x.v[i];
+	bbox.min[1] = m_box_min.y.v[i];
+	bbox.min[2] = m_box_min.z.v[i];
+	bbox.max[0] = m_box_max.x.v[i];
+	bbox.max[1] = m_box_max.y.v[i];
+	bbox.max[2] = m_box_max.z.v[i];
 
     return bbox;
 }
 
 template <typename AABB>
-inline AABB Node<AABB>::get_right_bbox() const
-{
-    AABBType bbox;
-
-    for (size_t i = 0; i < Dimension; ++i)
-    {
-        bbox.min[i] = m_bbox_data[i * 4 + 1];
-        bbox.max[i] = m_bbox_data[i * 4 + 3];
-    }
-
-    return bbox;
-}
-
-template <typename AABB>
-inline void Node<AABB>::set_left_bbox_index(const size_t index)
+inline void Node<AABB>::set_bbox_index(const size_t i, const size_t index)
 {
     assert(index <= 0xFFFFFFFFUL);
     m_left_bbox_index = static_cast<uint32>(index);
 }
 
 template <typename AABB>
-inline void Node<AABB>::set_left_bbox_count(const size_t count)
+inline void Node<AABB>::set_bbox_count(const size_t i, const size_t count)
 {
     assert(count <= 0xFFFFFFFFUL);
     m_left_bbox_count = static_cast<uint32>(count);
 }
 
 template <typename AABB>
-inline void Node<AABB>::set_right_bbox_index(const size_t index)
-{
-    assert(index <= 0xFFFFFFFFUL);
-    m_right_bbox_index = static_cast<uint32>(index);
-}
-
-template <typename AABB>
-inline void Node<AABB>::set_right_bbox_count(const size_t count)
-{
-    assert(count <= 0xFFFFFFFFUL);
-    m_right_bbox_count = static_cast<uint32>(count);
-}
-
-template <typename AABB>
-inline size_t Node<AABB>::get_left_bbox_index() const
+inline size_t Node<AABB>::get_bbox_index(const size_t i) const
 {
     return static_cast<uint32>(m_left_bbox_index);
 }
 
 template <typename AABB>
-inline size_t Node<AABB>::get_left_bbox_count() const
+inline size_t Node<AABB>::get_bbox_count(const size_t i) const
 {
     return static_cast<uint32>(m_left_bbox_count);
 }
 
 template <typename AABB>
-inline size_t Node<AABB>::get_right_bbox_index() const
-{
-    return static_cast<uint32>(m_right_bbox_index);
-}
-
-template <typename AABB>
-inline size_t Node<AABB>::get_right_bbox_count() const
-{
-    return static_cast<uint32>(m_right_bbox_count);
-}
-
-template <typename AABB>
-const size_t Node<AABB>::MaxUserDataSize = 4 * Node<AABB>::Dimension * sizeof(typename AABB::ValueType);
-
-template <typename AABB>
-template <typename U>
-inline void Node<AABB>::set_user_data(const U& data)
-{
-    get_user_data<U>() = data;
-}
-
-template <typename AABB>
-template <typename U>
-inline const U& Node<AABB>::get_user_data() const
-{
-    assert(sizeof(U) <= MaxUserDataSize);               // todo: use static_assert<>
-    return *reinterpret_cast<const U*>(m_bbox_data);
-}
-
-template <typename AABB>
-template <typename U>
-inline U& Node<AABB>::get_user_data()
-{
-    assert(sizeof(U) <= MaxUserDataSize);               // todo: use static_assert<>
-    return *reinterpret_cast<U*>(m_bbox_data);
-}
-
-template <typename AABB>
-inline void Node<AABB>::set_child_node_index(const size_t index)
+inline void Node<AABB>::set_child_node_index(const size_t i, const size_t index)
 {
     assert(index <= 0xFFFFFFFFUL);
     m_index = static_cast<uint32>(index);
 }
 
 template <typename AABB>
-inline size_t Node<AABB>::get_child_node_index() const
+inline size_t Node<AABB>::get_child_node_index(const size_t i) const
 {
     return static_cast<size_t>(m_index);
 }
 
 template <typename AABB>
-inline void Node<AABB>::set_item_index(const size_t index)
+inline void Node<AABB>::set_item_index(const size_t i, const size_t index)
 {
     assert(index <= 0xFFFFFFFFUL);
     m_index = static_cast<uint32>(index);
 }
 
 template <typename AABB>
-inline size_t Node<AABB>::get_item_index() const
+inline size_t Node<AABB>::get_item_index(const size_t i) const
 {
     return static_cast<size_t>(m_index);
 }
 
 template <typename AABB>
-inline void Node<AABB>::set_item_count(const size_t count)
+inline void Node<AABB>::set_item_count(const size_t i, const size_t count)
 {
     assert(count < 0xFFFFFFFFUL);
     m_item_count = static_cast<uint32>(count);
 }
 
 template <typename AABB>
-inline size_t Node<AABB>::get_item_count() const
+inline size_t Node<AABB>::get_item_count(const size_t i) const
 {
     return static_cast<size_t>(m_item_count);
 }
