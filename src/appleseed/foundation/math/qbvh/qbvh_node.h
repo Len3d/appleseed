@@ -92,28 +92,25 @@ class FOUNDATION_ALIGN(64) Node
     // Get the node type by node index.
     static bool is_leaf(const int32 node_index);
     // Get the i-th split axis (there are three split axes for each interior node) by node index.
-    static size_t get_split_axis(const int32 node_index);
+    static size_t decode_split_axis(const int32 node_index);
     // Get the index of the first item by node index.
-    static size_t get_item_index(const int32 node_index);
+    static size_t decode_item_index(const int32 node_index);
 
-    // Set the split axis of the i-th child node (interior nodes only).
+    // Set/get the split axis of the i-th child node (interior nodes only).
     void set_split_axis(const size_t i, const size_t axis);
+    size_t get_split_axis(const size_t i) const;
 
     // Set/get the bounding boxes of the i-th child node (interior nodes only, static case).
     void set_bbox(const size_t i, const AABBType& bbox);
     AABBType get_bbox(const size_t i) const;
 
-    // Set/get the bounding boxes of the i-th child node (interior nodes only, motion case).
-    void set_bbox_index(const size_t i, const size_t index);
-    void set_bbox_count(const size_t i, const size_t count);
-    size_t get_bbox_index(const size_t i) const;
-    size_t get_bbox_count(const size_t i) const;
+    // TODO: We should support motion case here.
 
     // Set/get the index of the i-th child node (interior nodes only).
     void set_child_node_index(const size_t i, const size_t index);
     size_t get_child_node_index(const size_t i) const;
 
-    // Set/get the index of the first item of the i-th child node (leaf nodes only).
+    // Set the index of the first item of the i-th child node (leaf nodes only).
     void set_item_index(const size_t i, const size_t index);
     size_t get_item_index(const size_t i) const;
 
@@ -129,8 +126,7 @@ class FOUNDATION_ALIGN(64) Node
     static const size_t Dimension = AABBType::Dimension;
 
     // The bounding boxes of 4 child nodes
-    SSEVector               m_box_min;
-    SSEVector               m_box_max;
+    SSEVector               m_bbox[2];
 
     // If a child is a leaf, its index will be negative, 
     // the 2 next bits will code the split axis, and the 29 remaining bits 
@@ -152,19 +148,22 @@ template <typename AABB>
 inline Node<AABB>::Node()
 {
     // Set to empty bounding boxes
-    m_box_min.x.m = _mm_set1_ps(MAX_SCALAR);
-	m_box_min.y.m = _mm_set1_ps(MAX_SCALAR);
-	m_box_min.z.m = _mm_set1_ps(MAX_SCALAR);
-	m_box_max.x.m = _mm_set1_ps(-MAX_SCALAR);
-	m_box_max.y.m = _mm_set1_ps(-MAX_SCALAR);
-	m_box_max.z.m = _mm_set1_ps(-MAX_SCALAR);
+    m_bbox[0].x.m = _mm_set1_ps(MAX_SCALAR);
+	m_bbox[0].y.m = _mm_set1_ps(MAX_SCALAR);
+	m_bbox[0].z.m = _mm_set1_ps(MAX_SCALAR);
+	m_bbox[1].x.m = _mm_set1_ps(-MAX_SCALAR);
+	m_bbox[1].y.m = _mm_set1_ps(-MAX_SCALAR);
+	m_bbox[1].z.m = _mm_set1_ps(-MAX_SCALAR);
 
     // All children are empty leaves by default
-    for (size_t i = 0; i < 4; ++i)
-    {
-        m_child[i] = EMPTY_LEAF_NODE;
-        m_prim_count[i] = 0;
-    }
+    m_child[0] = EMPTY_LEAF_NODE;
+    m_child[1] = EMPTY_LEAF_NODE;
+    m_child[2] = EMPTY_LEAF_NODE;
+    m_child[3] = EMPTY_LEAF_NODE;
+    m_prim_count[0] = 0;
+    m_prim_count[1] = 0;
+    m_prim_count[2] = 0;
+    m_prim_count[3] = 0;
 }
 
 template <typename AABB>
@@ -174,33 +173,39 @@ inline bool Node<AABB>::is_leaf(const int32 node_index)
 }
 
 template <typename AABB>
-inline size_t Node<AABB>::get_split_axis(const int32 node_index)
+inline size_t Node<AABB>::decode_split_axis(const int32 node_index)
 {
-    return (size_t)((node_index >> 29) & 3);
+    return static_cast<size_t>((node_index >> 29) & 3);
 }
 
 template <typename AABB>
-inline size_t Node<AABB>::get_item_index(const int32 node_index)
+inline size_t Node<AABB>::decode_item_index(const int32 node_index)
 {
-    return (size_t)(node_index & 0x1FFFFFFF);
+    return static_cast<size_t>(node_index & 0x1FFFFFFF);
 }
 
 template <typename AABB>
 inline void Node<AABB>::set_split_axis(const size_t i, const size_t axis)
 {
     m_child[i] &= (~(3 << 29)); // Clear the split axis bits
-	m_child[i] |= ((((int32)axis) & 3) << 29);
+	m_child[i] |= ((static_cast<int32>(axis) & 3) << 29);
+}
+
+template <typename AABB>
+inline size_t Node<AABB>::get_split_axis(const size_t i) const
+{
+    return decode_split_axis(m_child[i]);
 }
 
 template <typename AABB>
 inline void Node<AABB>::set_bbox(const size_t i, const AABBType& bbox)
 {
-    m_box_min.x.v[i] = bbox.min[0];
-	m_box_min.y.v[i] = bbox.min[1];
-	m_box_min.z.v[i] = bbox.min[2];
-	m_box_max.x.v[i] = bbox.max[0];
-	m_box_max.y.v[i] = bbox.max[1];
-	m_box_max.z.v[i] = bbox.max[2];
+    m_bbox[0].x.v[i] = bbox.min[0];
+	m_bbox[0].y.v[i] = bbox.min[1];
+	m_bbox[0].z.v[i] = bbox.min[2];
+	m_bbox[1].x.v[i] = bbox.max[0];
+	m_bbox[1].y.v[i] = bbox.max[1];
+	m_bbox[1].z.v[i] = bbox.max[2];
 }
 
 template <typename AABB>
@@ -208,79 +213,56 @@ inline AABB Node<AABB>::get_bbox(const size_t i) const
 {
     AABBType bbox;
 
-    bbox.min[0] = m_box_min.x.v[i];
-	bbox.min[1] = m_box_min.y.v[i];
-	bbox.min[2] = m_box_min.z.v[i];
-	bbox.max[0] = m_box_max.x.v[i];
-	bbox.max[1] = m_box_max.y.v[i];
-	bbox.max[2] = m_box_max.z.v[i];
+    bbox.min[0] = m_bbox[0].x.v[i];
+	bbox.min[1] = m_bbox[0].y.v[i];
+	bbox.min[2] = m_bbox[0].z.v[i];
+	bbox.max[0] = m_bbox[1].x.v[i];
+	bbox.max[1] = m_bbox[1].y.v[i];
+	bbox.max[2] = m_bbox[1].z.v[i];
 
     return bbox;
 }
 
 template <typename AABB>
-inline void Node<AABB>::set_bbox_index(const size_t i, const size_t index)
-{
-    assert(index <= 0xFFFFFFFFUL);
-    m_left_bbox_index = static_cast<uint32>(index);
-}
-
-template <typename AABB>
-inline void Node<AABB>::set_bbox_count(const size_t i, const size_t count)
-{
-    assert(count <= 0xFFFFFFFFUL);
-    m_left_bbox_count = static_cast<uint32>(count);
-}
-
-template <typename AABB>
-inline size_t Node<AABB>::get_bbox_index(const size_t i) const
-{
-    return static_cast<uint32>(m_left_bbox_index);
-}
-
-template <typename AABB>
-inline size_t Node<AABB>::get_bbox_count(const size_t i) const
-{
-    return static_cast<uint32>(m_left_bbox_count);
-}
-
-template <typename AABB>
 inline void Node<AABB>::set_child_node_index(const size_t i, const size_t index)
 {
+    // Currently we have limited bits of integer
     assert(index <= 0xFFFFFFFFUL);
-    m_index = static_cast<uint32>(index);
+    
+    m_child[i] = static_cast<int32>(index);
 }
 
 template <typename AABB>
 inline size_t Node<AABB>::get_child_node_index(const size_t i) const
 {
-    return static_cast<size_t>(m_index);
+    return static_cast<size_t>(m_child[i]);
 }
 
 template <typename AABB>
 inline void Node<AABB>::set_item_index(const size_t i, const size_t index)
 {
-    assert(index <= 0xFFFFFFFFUL);
-    m_index = static_cast<uint32>(index);
+    // Currently we have limited bits of integer
+    assert(index <= 0x1FFFFFFFUL);
+
+    m_child[i] |= (static_cast<int32>(index) & 0x1FFFFFFF);
 }
 
 template <typename AABB>
 inline size_t Node<AABB>::get_item_index(const size_t i) const
 {
-    return static_cast<size_t>(m_index);
+    return decode_item_index(m_child[i]);
 }
 
 template <typename AABB>
 inline void Node<AABB>::set_item_count(const size_t i, const size_t count)
 {
-    assert(count < 0xFFFFFFFFUL);
-    m_item_count = static_cast<uint32>(count);
+    m_prim_count[i] = static_cast<uint32>(count);
 }
 
 template <typename AABB>
 inline size_t Node<AABB>::get_item_count(const size_t i) const
 {
-    return static_cast<size_t>(m_item_count);
+    return static_cast<size_t>(m_prim_count[i]);
 }
 
 }       // namespace qbvh

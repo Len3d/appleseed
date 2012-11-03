@@ -90,17 +90,17 @@ Tree<NodeVector>::Tree(const AllocatorType& allocator)
 template <typename NodeVector>
 void Tree<NodeVector>::clear()
 {
-    // TODO: m_node_bboxes is not clear here
     m_nodes.clear();
+    m_node_bboxes.clear();
 }
 
 template <typename NodeVector>
 size_t Tree<NodeVector>::get_memory_size() const
 {
-    // TODO: Should we count the memory of m_node_bboxes?
     return
           sizeof(*this)
-        + m_nodes.capacity() * sizeof(NodeType);
+        + m_nodes.capacity() * sizeof(NodeType)
+        + m_node_bboxes.capacity() * sizeof(AABBType);
 }
 
 }       // namespace qbvh
