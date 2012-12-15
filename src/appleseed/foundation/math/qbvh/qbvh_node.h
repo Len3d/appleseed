@@ -45,7 +45,7 @@ namespace qbvh {
 
 // The constant used to represent empty leaves.
 #define EMPTY_LEAF_NODE		0xFFFFFFFF
-// TODO: Conform this value to standard.
+// TODO: Conform this value to C++ standard.
 #define MAX_SCALAR          (3.402823466e+38f)
 
 //
@@ -75,7 +75,6 @@ typedef struct SSEVector {
 
 //
 // Node (leaf node or interior node) of a QBVH.
-// 128 bytes long, perfect for cache line.
 // User data is not supported by QBVH nodes, because 
 // we directly encode leave data in its parent.
 //
@@ -91,8 +90,6 @@ class FOUNDATION_ALIGN(64) Node
 
     // Get the node type by node index.
     static bool is_leaf(const int32 node_index);
-    // Get the i-th split axis (there are three split axes for each interior node) by node index.
-    static size_t decode_split_axis(const int32 node_index);
     // Get the index of the first item by node index.
     static size_t decode_item_index(const int32 node_index);
 
@@ -128,15 +125,12 @@ class FOUNDATION_ALIGN(64) Node
     // The bounding boxes of 4 child nodes
     SSEVector               m_bbox[2];
 
-    // If a child is a leaf, its index will be negative, 
-    // the 2 next bits will code the split axis, and the 29 remaining bits 
-    // will code the index of the first primitive.
+    // The first 1 bit encode if the child is a leaf, the next 31 bits encode 
+    // the first primitive index
     int32					m_child[4];
-    // The number of primitives in each child if it's a leaf. Our implementation 
-    // is different from other implementations, we don't have the limitation of 
-    // at the most 64 primitives each leaf, we can have any number of leaf 
-    // primitives.
-    uint32					m_prim_count[4];
+    // The first 2 bits encode the split axis, the next 30 bits encode the 
+    // primitive count
+    uint32					m_flags[4];
 };
 
 
@@ -160,10 +154,10 @@ inline Node<AABB>::Node()
     m_child[1] = EMPTY_LEAF_NODE;
     m_child[2] = EMPTY_LEAF_NODE;
     m_child[3] = EMPTY_LEAF_NODE;
-    m_prim_count[0] = 0;
-    m_prim_count[1] = 0;
-    m_prim_count[2] = 0;
-    m_prim_count[3] = 0;
+    m_flags[0] = 0;
+    m_flags[1] = 0;
+    m_flags[2] = 0;
+    m_flags[3] = 0;
 }
 
 template <typename AABB>
@@ -173,28 +167,22 @@ inline bool Node<AABB>::is_leaf(const int32 node_index)
 }
 
 template <typename AABB>
-inline size_t Node<AABB>::decode_split_axis(const int32 node_index)
-{
-    return static_cast<size_t>((node_index >> 29) & 3);
-}
-
-template <typename AABB>
 inline size_t Node<AABB>::decode_item_index(const int32 node_index)
 {
-    return static_cast<size_t>(node_index & 0x1FFFFFFF);
+    return static_cast<size_t>(node_index & 0x7FFFFFFF);
 }
 
 template <typename AABB>
 inline void Node<AABB>::set_split_axis(const size_t i, const size_t axis)
 {
-    m_child[i] &= (~(3 << 29)); // Clear the split axis bits
-	m_child[i] |= ((static_cast<int32>(axis) & 3) << 29);
+    m_flags[i] &= 0x3FFFFFFF; // Clear the split axis bits
+	m_flags[i] |= ((static_cast<int32>(axis) & 3) << 30);
 }
 
 template <typename AABB>
 inline size_t Node<AABB>::get_split_axis(const size_t i) const
 {
-    return decode_split_axis(m_child[i]);
+    return static_cast<size_t>(m_flags[i] >> 30);
 }
 
 template <typename AABB>
@@ -242,9 +230,9 @@ template <typename AABB>
 inline void Node<AABB>::set_item_index(const size_t i, const size_t index)
 {
     // Currently we have limited bits of integer
-    assert(index <= 0x1FFFFFFFUL);
+    assert(index <= 0x7FFFFFFFUL);
 
-    m_child[i] |= (static_cast<int32>(index) & 0x1FFFFFFF);
+    m_child[i] |= (static_cast<int32>(index) & 0x7FFFFFFF);
 }
 
 template <typename AABB>
@@ -256,13 +244,14 @@ inline size_t Node<AABB>::get_item_index(const size_t i) const
 template <typename AABB>
 inline void Node<AABB>::set_item_count(const size_t i, const size_t count)
 {
-    m_prim_count[i] = static_cast<uint32>(count);
+    m_flags[i] &= (3 << 30); // Clear the count bits
+    m_flags[i] |= (static_cast<uint32>(count) & 0x3FFFFFFF);
 }
 
 template <typename AABB>
 inline size_t Node<AABB>::get_item_count(const size_t i) const
 {
-    return static_cast<size_t>(m_prim_count[i]);
+    return static_cast<size_t>(m_flags[i] & 0x3FFFFFFF);
 }
 
 }       // namespace qbvh
