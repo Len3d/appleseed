@@ -42,4 +42,10 @@
 #include "foundation/math/bvh/bvh_statistics.h"
 #include "foundation/math/bvh/bvh_tree.h"
 
+// For now, QBVH is just an extension of BVH
+#include "foundation/math/qbvh/bvh_to_qbvh_convertor.h"
+#include "foundation/math/qbvh/qbvh_intersector.h"
+#include "foundation/math/qbvh/qbvh_node.h"
+#include "foundation/math/qbvh/qbvh_tree.h"
+
 #endif  // !APPLESEED_FOUNDATION_MATH_BVH_H

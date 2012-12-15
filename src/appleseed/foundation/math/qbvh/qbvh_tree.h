@@ -62,7 +62,7 @@ class Tree
     size_t get_memory_size() const;
 
   protected:
-    template <typename Tree>
+    template <typename BVHTree, typename Tree>
     friend class Convertor;
 
     template <typename Tree, typename Visitor, typename Ray, size_t StackSize, size_t N>
