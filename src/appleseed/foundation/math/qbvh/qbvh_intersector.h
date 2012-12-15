@@ -187,6 +187,11 @@ class Intersector<Tree, Visitor, Ray, StackSize, 3>
         ) const;
 };
 
+#define QMASK0 0x1
+#define QMASK1 0x2
+#define QMASK2 0x4
+#define QMASK3 0x8
+
 template <
     typename Tree,
     typename Visitor,
@@ -258,25 +263,211 @@ void Intersector<Tree, Visitor, Ray, StackSize, 3>::intersect(
 	        // Get the visit flags
 	        const int32 visit = _mm_movemask_ps(_mm_cmpge_ps(tMax, tMin));
 
-            if (visit & 0x1)
+            // Do axis-based sorting for traversal order
+			switch ((qray.m_sign[node.get_split_axis(0)] << 2) 
+				+ (qray.m_sign[node.get_split_axis(1)] << 1) 
+				+ qray.m_sign[node.get_split_axis(2)])
 			{
-				++todoNode;
-				nodeStack[todoNode] = node.get_child_node_index(0);
-			}
-			if (visit & 0x2)
-			{
-				++todoNode;
-				nodeStack[todoNode] = node.get_child_node_index(1);
-			}
-			if (visit & 0x4)
-			{
-				++todoNode;
-				nodeStack[todoNode] = node.get_child_node_index(2);
-			}
-			if (visit & 0x8)
-			{
-				++todoNode;
-				nodeStack[todoNode] = node.get_child_node_index(3);
+			case 0:
+				{
+					// Final: 0, 1, 2, 3, stack is last in first out
+					if (visit & QMASK3)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(3);
+					}
+					if (visit & QMASK2)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(2);
+					}
+					if (visit & QMASK1)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(1);
+					}
+					if (visit & QMASK0)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(0);
+					}
+				}
+				break;
+			case 1:
+				{
+					// Final: 0, 1, 3, 2, stack is last in first out
+					if (visit & QMASK2)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(2);
+					}
+					if (visit & QMASK3)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(3);
+					}
+					if (visit & QMASK1)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(1);
+					}
+					if (visit & QMASK0)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(0);
+					}
+				}
+				break;
+			case 2:
+				{
+					// Final: 1, 0, 2, 3, stack is last in first out
+					if (visit & QMASK3)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(3);
+					}
+					if (visit & QMASK2)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(2);
+					}
+					if (visit & QMASK0)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(0);
+					}
+					if (visit & QMASK1)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(1);
+					}
+				}
+				break;
+			case 3:
+				{
+					// Final: 1, 0, 3, 2, stack is last in first out
+					if (visit & QMASK2)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(2);
+					}
+					if (visit & QMASK3)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(3);
+					}
+					if (visit & QMASK0)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(0);
+					}
+					if (visit & QMASK1)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(1);
+					}
+				}
+				break;
+			case 4:
+				{
+					// Final: 2, 3, 0, 1, stack is last in first out
+					if (visit & QMASK1)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(1);
+					}
+					if (visit & QMASK0)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(0);
+					}
+					if (visit & QMASK3)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(3);
+					}
+					if (visit & QMASK2)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(2);
+					}
+				}
+				break;
+			case 5:
+				{
+					// Final: 3, 2, 0, 1, stack is last in first out
+					if (visit & QMASK1)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(1);
+					}
+					if (visit & QMASK0)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(0);
+					}
+					if (visit & QMASK2)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(2);
+					}
+					if (visit & QMASK3)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(3);
+					}
+				}
+				break;
+			case 6:
+				{
+					// Final: 2, 3, 1, 0, stack is last in first out
+					if (visit & QMASK0)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(0);
+					}
+					if (visit & QMASK1)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(1);
+					}
+					if (visit & QMASK3)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(3);
+					}
+					if (visit & QMASK2)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(2);
+					}
+				}
+				break;
+			case 7:
+				{
+					// Final: 3, 2, 1, 0, stack is last in first out
+					if (visit & QMASK0)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(0);
+					}
+					if (visit & QMASK1)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(1);
+					}
+					if (visit & QMASK2)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(2);
+					}
+					if (visit & QMASK3)
+					{
+						++todoNode;
+						nodeStack[todoNode] = node.get_child_node_index(3);
+					}
+				}
+				break;
 			}
         }
         else
@@ -297,7 +488,7 @@ void Intersector<Tree, Visitor, Ray, StackSize, 3>::intersect(
 
             const bool proceed =
                 visitor.visit(
-                    tree.m_nodes[leafData],
+                    tree.m_nodes[decode_item_index(leafData)],
                     ray,
                     ray_info,
                     distance
