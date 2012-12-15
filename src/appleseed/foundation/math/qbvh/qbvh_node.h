@@ -45,13 +45,12 @@ namespace qbvh {
 
 // The constant used to represent empty leaves.
 #define EMPTY_LEAF_NODE		0xFFFFFFFF
-// TODO: Conform this value to C++ standard.
-#define MAX_SCALAR          (3.402823466e+38f)
+#define MAX_SCALAR          std::numeric_limits<float>::max()
 
 //
 // Helper class, SSE scalar.
 //
-typedef struct SSEScalar {
+typedef struct QuadScalar {
     union {
 		struct {
 			float   	x;
@@ -62,16 +61,16 @@ typedef struct SSEScalar {
 		float   		v[4];
 		__m128			m;
 	};
-} SSEScalar;
+} QuadScalar;
 
 //
 // Helper class, SSE vector.
 //
-typedef struct SSEVector {
-	SSEScalar	    x;
-	SSEScalar	    y;
-	SSEScalar	    z;
-} SSEVector;
+typedef struct QuadVector {
+	QuadScalar	    x;
+	QuadScalar	    y;
+	QuadScalar	    z;
+} QuadVector;
 
 //
 // Node (leaf node or interior node) of a QBVH.
@@ -123,7 +122,7 @@ class FOUNDATION_ALIGN(64) Node
     static const size_t Dimension = AABBType::Dimension;
 
     // The bounding boxes of 4 child nodes
-    SSEVector               m_bbox[2];
+    QuadVector               m_bbox[2];
 
     // The first 1 bit encode if the child is a leaf, the next 31 bits encode 
     // the first primitive index

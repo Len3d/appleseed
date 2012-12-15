@@ -149,9 +149,9 @@ void Intersector<Tree, Visitor, Ray, StackSize, N>::intersect(
 class QuadRay
 {
 public:
-    SSEVector   org;
-    SSEVector   inv_dir;
-    int32       sign[3];
+    QuadVector   m_org;
+    QuadVector   m_inv_dir;
+    int32        m_sign[3];
 };
 
 template <
@@ -206,17 +206,17 @@ void Intersector<Tree, Visitor, Ray, StackSize, 3>::intersect(
     QuadRay qray;
 
     // Build quad ray
-    qray.org.x.m = _mm_set1_ps(ray.m_org.x);
-    qray.org.y.m = _mm_set1_ps(ray.m_org.y);
-    qray.org.z.m = _mm_set1_ps(ray.m_org.z);
-    qray.inv_dir.x.m = _mm_set1_ps(ray.m_rcp_dir.x);
-    qray.inv_dir.y.m = _mm_set1_ps(ray.m_rcp_dir.y);
-    qray.inv_dir.z.m = _mm_set1_ps(ray.m_rcp_dir.z);
+    qray.m_org.x.m = _mm_set1_ps(ray.m_org.x);
+    qray.m_org.y.m = _mm_set1_ps(ray.m_org.y);
+    qray.m_org.z.m = _mm_set1_ps(ray.m_org.z);
+    qray.m_inv_dir.x.m = _mm_set1_ps(ray.m_rcp_dir.x);
+    qray.m_inv_dir.y.m = _mm_set1_ps(ray.m_rcp_dir.y);
+    qray.m_inv_dir.z.m = _mm_set1_ps(ray.m_rcp_dir.z);
 
     // Get ray direction signs
-    qray.sign[0] = (ray.m_dir.x < 0.0f);
-    qray.sign[1] = (ray.m_dir.y < 0.0f);
-    qray.sign[2] = (ray.m_dir.z < 0.0f);
+    qray.m_sign[0] = (ray.m_dir.x < 0.0f);
+    qray.m_sign[1] = (ray.m_dir.y < 0.0f);
+    qray.m_sign[2] = (ray.m_dir.z < 0.0f);
 
     // Node stack
     int32 nodeStack[StackSize];
@@ -238,22 +238,22 @@ void Intersector<Tree, Visitor, Ray, StackSize, 3>::intersect(
 	        __m128 tMax = _mm_set1_ps(ray_tmax);
 
 	        // X coordinate
-	        tMin = _mm_max_ps(tMin, _mm_mul_ps(_mm_sub_ps(node.m_bbox[qray.sign[0]].x.m, 
-		        qray.org.x.m), qray.inv_dir.x.m));
-	        tMax = _mm_min_ps(tMax, _mm_mul_ps(_mm_sub_ps(node.m_bbox[1 - qray.sign[0]].x.m, 
-		        qray.org.x.m), qray.inv_dir.x.m));
+	        tMin = _mm_max_ps(tMin, _mm_mul_ps(_mm_sub_ps(node.m_bbox[qray.m_sign[0]].x.m, 
+		        qray.m_org.x.m), qray.m_inv_dir.x.m));
+	        tMax = _mm_min_ps(tMax, _mm_mul_ps(_mm_sub_ps(node.m_bbox[1 - qray.m_sign[0]].x.m, 
+		        qray.m_org.x.m), qray.m_inv_dir.x.m));
 
 	        // Y coordinate
-	        tMin = _mm_max_ps(tMin, _mm_mul_ps(_mm_sub_ps(node.m_bbox[qray.sign[1]].y.m, 
-		        qray.org.y.m), qray.inv_dir.y.m));
-	        tMax = _mm_min_ps(tMax, _mm_mul_ps(_mm_sub_ps(node.m_bbox[1 - qray.sign[1]].y.m, 
-		        qray.org.y.m), qray.inv_dir.y.m));
+	        tMin = _mm_max_ps(tMin, _mm_mul_ps(_mm_sub_ps(node.m_bbox[qray.m_sign[1]].y.m, 
+		        qray.m_org.y.m), qray.m_inv_dir.y.m));
+	        tMax = _mm_min_ps(tMax, _mm_mul_ps(_mm_sub_ps(node.m_bbox[1 - qray.m_sign[1]].y.m, 
+		        qray.m_org.y.m), qray.m_inv_dir.y.m));
 
 	        // Z coordinate
-	        tMin = _mm_max_ps(tMin, _mm_mul_ps(_mm_sub_ps(node.m_bbox[qray.sign[2]].z.m, 
-		        qray.org.z.m), qray.inv_dir.z.m));
-	        tMax = _mm_min_ps(tMax, _mm_mul_ps(_mm_sub_ps(node.m_bbox[1 - qray.sign[2]].z.m, 
-		        qray.org.z.m), qray.inv_dir.z.m));
+	        tMin = _mm_max_ps(tMin, _mm_mul_ps(_mm_sub_ps(node.m_bbox[qray.m_sign[2]].z.m, 
+		        qray.m_org.z.m), qray.m_inv_dir.z.m));
+	        tMax = _mm_min_ps(tMax, _mm_mul_ps(_mm_sub_ps(node.m_bbox[1 - qray.m_sign[2]].z.m, 
+		        qray.m_org.z.m), qray.m_inv_dir.z.m));
 
 	        // Get the visit flags
 	        const int32 visit = _mm_movemask_ps(_mm_cmpge_ps(tMax, tMin));
